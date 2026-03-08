@@ -54,7 +54,8 @@ def gp(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = None
        tree_functions: list = list(FUNCTIONS.keys()),
        tree_constants: list = [float(key.replace("constant_", "").replace("_", "-")) for key in CONSTANTS],
        tournament_size: int = 2,
-       test_elite: bool = gp_solve_parameters["test_elite"]):
+       test_elite: bool = gp_solve_parameters["test_elite"],
+       sigmoid_scaling_factor: float = 1.0):
 
     """
     Main function to execute the StandardGP algorithm on specified datasets
@@ -111,6 +112,9 @@ def gp(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = None
         Tournament size to utilize during selection. Only applicable if using tournament selection. (Default is 2)
     test_elite : bool, optional
         Whether to test the elite individual on the test set after each generation.
+    sigmoid_scaling_factor : float, optional
+        Scaling factor for the sigmoid used in the ``sigmoid_rmse`` fitness function.
+        Only relevant when ``fitness_function="sigmoid_rmse"`` (default is 1.0).
 
     Returns
     -------
@@ -148,6 +152,11 @@ def gp(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = None
         warnings.warn("No dataset name set. Using default value of dataset_1.")
         dataset_name = "dataset_1"
 
+
+    # if using sigmoid_rmse, rebuild it with the requested scaling factor
+    if fitness_function.lower() == "sigmoid_rmse":
+        from slim_gsgp.evaluators.fitness_functions import sigmoid_rmse as _sigmoid_rmse
+        fitness_function_options["sigmoid_rmse"] = _sigmoid_rmse(sigmoid_scaling_factor)
 
     # creating a list with the valid available fitness functions
     valid_fitnesses = list(fitness_function_options)
