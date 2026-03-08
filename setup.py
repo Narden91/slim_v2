@@ -11,7 +11,8 @@ setup(
         'torch',
         'scipy',
         'scikit-learn',
-        'joblib'
+        'joblib',
+        'dill'
     ],
     entry_points={
         'console_scripts': [
