@@ -48,43 +48,11 @@ No core SLIM files are touched -- this runs plain ``slim()`` K-1 times.
 import torch
 
 from slim_gsgp.main_slim import slim
+from slim_gsgp.classification.codes import simplex_codes
 
-__all__ = ["simplex_codes", "MulticlassResult", "fit_multiclass", "predict_multiclass"]
+__all__ = ["MulticlassResult", "fit_multiclass", "predict_multiclass"]
 
 
-def simplex_codes(n_classes: int) -> torch.Tensor:
-    """
-    Regular simplex class codes in R^(K-1) (formulation section 3).
-
-    Built from the rows of a (K-1)-dimensional regular simplex: unit norm,
-    pairwise inner product -1/(K-1), and they sum to zero. For K=2 this
-    reduces to the {-1, +1} codes used by binary margin_loss (formulation
-    section 7).
-
-    Parameters
-    ----------
-    n_classes : int
-        Number of classes K, at least 2.
-
-    Returns
-    -------
-    torch.Tensor
-        Shape (K, K-1). Row k is the code for class k.
-    """
-    if n_classes < 2:
-        raise ValueError("simplex_codes requires n_classes >= 2")
-    if n_classes == 2:
-        return torch.tensor([[-1.0], [1.0]])
-
-    # Standard construction: K-1 orthonormal directions of the K-point
-    # regular simplex, obtained from the centered (K x K) identity via QR,
-    # then normalized to unit rows.
-    eye = torch.eye(n_classes)
-    centered = eye - eye.mean(dim=0, keepdim=True)
-    q, _ = torch.linalg.qr(centered)
-    codes = q[:, : n_classes - 1]
-    codes = codes / codes.norm(dim=1, keepdim=True)
-    return codes
 
 
 class MulticlassResult:
@@ -148,6 +116,12 @@ def fit_multiclass(
 
     val_codes = None
     if y_val is not None:
+        unseen = {float(c) for c in torch.unique(y_val)} - set(class_to_row)
+        if unseen:
+            raise ValueError(
+                f"y_val contains classes absent from y_train: {sorted(unseen)}; "
+                "they have no simplex code, so no validation target can be built"
+            )
         val_row_idx = torch.tensor([class_to_row[float(c)] for c in y_val])
         val_codes = codes[val_row_idx]
 

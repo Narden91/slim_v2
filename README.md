@@ -116,6 +116,170 @@ acc = float((predictions == y_test).float().mean())
 print(f"Accuracy: {acc:.4f}")
 ```
 
+### Classification with MS-SLIM (margin loss)
+
+`sigmoid_rmse` above squashes raw outputs through a sigmoid before measuring
+error. The sigmoid saturates where a program is most wrong, so the search feels
+almost no pressure exactly there. **MS-SLIM** removes the sigmoid and measures a
+squared-hinge margin directly on the raw semantics the operators already move:
+
+```
+L(s) = mean( [1 - y*s]_+^2 + lam * s^2 ),   y in {-1, +1}
+```
+
+Pick a technique with `get_strategy`, which binds the label encoding, the
+fitness function, and the prediction decoding together so they cannot be
+mismatched:
+
+```python
+from slim_gsgp.main_slim import slim
+from slim_gsgp.datasets.data_loader import load_breast_cancer
+from slim_gsgp.utils.utils import train_test_split
+from slim_gsgp.classification import get_strategy
+
+X, y = load_breast_cancer(X_y=True)
+X_train, X_test, y_train, y_test = train_test_split(X, y, p_test=0.4)
+X_val,   X_test, y_val,   y_test = train_test_split(X_test, y_test, p_test=0.5)
+
+strategy = get_strategy("margin")          # or "logistic", "code_regression", "sigmoid_rmse"
+
+model = slim(
+    X_train=X_train, y_train=strategy.encode(y_train),
+    X_test=X_val,    y_test=strategy.encode(y_val),
+    dataset_name="breast_cancer",
+    slim_version="SLIM+ABS", pop_size=100, n_iter=100,
+    fitness_function=strategy.fit_string,
+    lam=0.01,                              # semantic regularization strength
+)
+
+predictions = strategy.decode(model.predict(X_test))
+accuracy = float((predictions == strategy.encode(y_test)).float().mean())
+print(f"Accuracy: {accuracy:.4f}")
+```
+
+Available strategies:
+
+| Name | Fitness | Labels | Purpose |
+|---|---|---|---|
+| `margin` | `[1 - y*s]_+^2 + lam*s^2` | `{-1,+1}` | MS-SLIM |
+| `logistic` | `log(1 + exp(-y*s))` | `{-1,+1}` | raw-score baseline |
+| `code_regression` | `(y - s)^2` | `{-1,+1}` | isolates the hinge |
+| `sigmoid_rmse` | `RMSE(sigmoid(s), y)` | `{0,1}` | Bakurov et al. (2022) |
+
+`lam > 0` gives the loss a unique optimum at `s* = y / (1 + lam)`. It bounds the
+semantic magnitude only — it is **not** a program-size penalty; deflate remains
+the size-control mechanism.
+
+### Adaptive inflate
+
+Because the margin loss is convex and inflate changes the semantics linearly,
+the best mutation step for a new block can be solved for instead of guessed.
+Pass `use_adaptive_inflate=True` (requires `fitness_function="margin"` and an
+additive `SLIM+` version):
+
+```python
+model = slim(
+    X_train=X_train, y_train=strategy.encode(y_train),
+    X_test=X_val,    y_test=strategy.encode(y_val),
+    dataset_name="breast_cancer", slim_version="SLIM+ABS",
+    pop_size=100, n_iter=100,
+    fitness_function="margin", lam=0.01,
+    use_adaptive_inflate=True,
+)
+```
+
+### Multiclass classification
+
+Classes are placed at the corners of a regular simplex, and a prediction is the
+nearest corner. Two architectures are provided.
+
+**Independent coordinates** — evolves K-1 separate programs, one per simplex
+coordinate. Simple and fast; it reproduces MS-SLIM's class geometry and
+prediction rule, but trains each coordinate with plain squared error, so it does
+**not** optimize the joint margin objective:
+
+```python
+import torch
+from sklearn.datasets import load_iris
+from slim_gsgp.utils.utils import train_test_split
+from slim_gsgp.classification import fit_multiclass
+
+data = load_iris()
+X = torch.tensor(data.data, dtype=torch.float32)
+y = torch.tensor(data.target, dtype=torch.float32)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, p_test=0.3, seed=0)
+X_train, X_val,  y_train, y_val  = train_test_split(X_train, y_train, p_test=0.25, seed=0)
+
+model = fit_multiclass(X_train, y_train, X_val, y_val,
+                       pop_size=100, n_iter=30, slim_version="SLIM+ABS",
+                       log_level=0, verbose=0, seed=0)
+
+accuracy = float((model.predict(X_test) == y_test).float().mean())
+print(f"Accuracy: {accuracy:.4f}")
+```
+
+**Shared blocks** — one set of symbolic blocks serves every class, each with its
+own coefficient vector (`P(x) = sum_b r_b(x) * a_b`). This optimizes the true
+joint margin objective, in which the classes are coupled:
+
+```python
+from slim_gsgp.classification import fit_shared_blocks
+
+model = fit_shared_blocks(X_train, y_train,
+                          slim_version="SLIM+ABS", pop_size=100, n_iter=30,
+                          lam=0.01, seed=0, verbose=1)
+
+accuracy = float((model.predict(X_test) == y_test).float().mean())
+print(f"Accuracy: {accuracy:.4f}  blocks: {model.individual.size}")
+```
+
+MS-SLIM produces scores and margins, not calibrated probabilities.
+
+### Running experiments
+
+`run_experiment` runs one strategy over many seeds on identical splits, so
+results across strategies are paired and directly comparable:
+
+```python
+from slim_gsgp.datasets.data_loader import load_breast_cancer
+from slim_gsgp.classification import run_experiment
+
+X, y = load_breast_cancer(X_y=True)
+
+results = run_experiment(
+    X, y, dataset_name="breast_cancer", strategy_name="margin",
+    seeds=range(30),
+    pop_size=100, n_iter=100, slim_version="SLIM+ABS", lam=0.01,
+    log_level=0, verbose=0,
+)
+
+print(results[["seed", "accuracy", "balanced_accuracy", "f1", "mcc", "auroc"]])
+results.to_csv("margin_breast_cancer.csv", index=False)
+```
+
+Each row carries accuracy, balanced accuracy, F1, MCC, AUROC, AUPRC, node count,
+block count and training time; margin runs additionally report the semantic norm
+and margin statistics. Sweep `lam` or compare strategies with an ordinary loop:
+
+```python
+import pandas as pd
+
+frames = [
+    run_experiment(X, y, "breast_cancer", name, seeds=range(30),
+                   pop_size=100, n_iter=100, lam=lam, log_level=0, verbose=0)
+    for name in ("margin", "logistic", "sigmoid_rmse")
+    for lam in (0.001, 0.01, 0.1)
+]
+everything = pd.concat(frames, ignore_index=True)
+```
+
+A runnable tour of everything above ships with the package:
+
+```bash
+python -m slim_gsgp.classification.example_classification
+```
+
 
 
 ## License

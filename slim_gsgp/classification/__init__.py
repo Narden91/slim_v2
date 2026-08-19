@@ -49,22 +49,51 @@ Example
 >>> y_pred = strategy.decode(model.predict(X_test))
 """
 
-from slim_gsgp.classification.codes import encode_binary, decode_binary
-from slim_gsgp.classification.losses import margin_loss, logistic_loss, code_regression_loss
+from slim_gsgp.classification.codes import (
+    encode_binary, encode_zero_one, decode_binary, simplex_codes,
+)
+from slim_gsgp.classification.losses import (
+    margin_loss, logistic_loss, code_regression_loss, multiclass_margin_loss,
+)
 from slim_gsgp.classification.strategies import ClassificationStrategy, STRATEGIES, get_strategy
 from slim_gsgp.classification.adaptive_inflate import optimal_alpha, adaptive_inflate
-from slim_gsgp.classification.experiments import run_experiment
-from slim_gsgp.classification.multiclass import (
-    simplex_codes, MulticlassResult, fit_multiclass, predict_multiclass,
-)
 from slim_gsgp.evaluators.fitness_functions import sigmoid_rmse, binary_sign_transform
+
+# ``experiments`` and ``multiclass`` import ``main_slim``, which imports
+# ``config.slim_config``, which imports ``classification.losses`` -- i.e. this
+# package. Importing them eagerly here makes that a cycle, and
+# ``from slim_gsgp.main_slim import slim`` fails outright unless something
+# happens to import this package first. Resolve them on attribute access
+# instead (PEP 562), so the public API is unchanged but the cycle never forms.
+_LAZY = {
+    "run_experiment": "slim_gsgp.classification.experiments",
+    "MulticlassResult": "slim_gsgp.classification.multiclass",
+    "fit_multiclass": "slim_gsgp.classification.multiclass",
+    "predict_multiclass": "slim_gsgp.classification.multiclass",
+    "fit_shared_blocks": "slim_gsgp.classification.shared_blocks",
+    "SharedBlockResult": "slim_gsgp.classification.shared_blocks",
+    "fit_coefficients": "slim_gsgp.classification.shared_blocks",
+}
+
+
+def __getattr__(name):
+    if name in _LAZY:
+        from importlib import import_module
+        return getattr(import_module(_LAZY[name]), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(__all__)
 
 __all__ = [
     "encode_binary",
+    "encode_zero_one",
     "decode_binary",
     "margin_loss",
     "logistic_loss",
     "code_regression_loss",
+    "multiclass_margin_loss",
     "ClassificationStrategy",
     "STRATEGIES",
     "get_strategy",
@@ -75,6 +104,9 @@ __all__ = [
     "MulticlassResult",
     "fit_multiclass",
     "predict_multiclass",
+    "fit_shared_blocks",
+    "SharedBlockResult",
+    "fit_coefficients",
     "sigmoid_rmse",
     "binary_sign_transform",
 ]

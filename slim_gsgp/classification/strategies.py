@@ -36,7 +36,7 @@ from typing import Callable
 
 import torch
 
-from slim_gsgp.classification.codes import encode_binary, decode_binary
+from slim_gsgp.classification.codes import encode_binary, encode_zero_one, decode_binary
 from slim_gsgp.evaluators.fitness_functions import binary_sign_transform
 
 
@@ -85,7 +85,7 @@ STRATEGIES = {
     "sigmoid_rmse": ClassificationStrategy(
         name="Sigmoid + RMSE (Bakurov et al. 2022)",
         fit_string="sigmoid_rmse",
-        encode=lambda y: y.float(),  # expects {0, 1} as-is
+        encode=encode_zero_one,
         decode=binary_sign_transform,
     ),
 }

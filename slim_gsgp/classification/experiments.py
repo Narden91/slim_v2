@@ -32,7 +32,8 @@ import time
 import pandas as pd
 import torch
 from sklearn.metrics import (
-    accuracy_score, balanced_accuracy_score, f1_score, matthews_corrcoef,
+    accuracy_score, average_precision_score, balanced_accuracy_score, f1_score,
+    matthews_corrcoef, roc_auc_score,
 )
 
 from slim_gsgp.main_slim import slim
@@ -97,9 +98,9 @@ def run_experiment(
     Returns
     -------
     pandas.DataFrame
-        One row per seed: accuracy, balanced_accuracy, f1, mcc, nodes_count,
-        n_blocks, train_time_s, plus semantic diagnostics for margin-based
-        strategies.
+        One row per seed: accuracy, balanced_accuracy, f1, mcc, auroc, auprc,
+        nodes_count, n_blocks, train_time_s, plus semantic diagnostics for
+        margin-based strategies.
     """
     X = torch.as_tensor(X, dtype=torch.float32) if not torch.is_tensor(X) else X
     y = torch.as_tensor(y, dtype=torch.float32) if not torch.is_tensor(y) else y
@@ -124,9 +125,14 @@ def run_experiment(
         )
         train_time_s = time.time() - start
 
-        y_pred = strategy.decode(model.predict(X_test)).numpy()
+        raw_scores = model.predict(X_test)
+        y_pred = strategy.decode(raw_scores).numpy()
         y_true = strategy.encode(y_test).numpy()
 
+        # AUROC/AUPRC rank observations, so they take the raw semantics rather
+        # than decoded labels -- thresholding first would throw away exactly the
+        # ordering they measure. Required for imbalanced data by the research plan.
+        positive = (y_true == y_true.max())
         row = {
             "dataset": dataset_name,
             "strategy": strategy_name,
@@ -135,6 +141,8 @@ def run_experiment(
             "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
             "f1": f1_score(y_true, y_pred, pos_label=1.0),
             "mcc": matthews_corrcoef(y_true, y_pred),
+            "auroc": roc_auc_score(positive, raw_scores.numpy()),
+            "auprc": average_precision_score(positive, raw_scores.numpy()),
             "nodes_count": model.nodes_count,
             "n_blocks": model.size,
             "train_time_s": train_time_s,

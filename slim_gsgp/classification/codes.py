@@ -59,6 +59,32 @@ def encode_binary(y: torch.Tensor) -> torch.Tensor:
     return torch.where(y == hi, torch.tensor(_POS), torch.tensor(_NEG)).float()
 
 
+def encode_zero_one(y: torch.Tensor) -> torch.Tensor:
+    """
+    Encode arbitrary two-valued labels as ``{0, 1}``, for sigmoid-based losses.
+
+    The counterpart of ``encode_binary`` for strategies whose loss expects
+    ``{0, 1}`` targets (``sigmoid_rmse``). Without this, passing ``{-1, +1}``
+    labels to such a strategy trains a sigmoid output, bounded in ``[0, 1]``,
+    against a ``-1`` target: the minimum is unreachable, and nothing raises.
+
+    Parameters
+    ----------
+    y : torch.Tensor
+        Labels with exactly two distinct values.
+
+    Returns
+    -------
+    torch.Tensor
+        Float tensor with values in ``{0.0, 1.0}``.
+    """
+    values = torch.unique(y)
+    if values.numel() != 2:
+        raise ValueError(f"encode_zero_one expects exactly 2 distinct labels, got {values.tolist()}")
+    hi = values.max()
+    return (y == hi).float()
+
+
 def decode_binary(y_pred: torch.Tensor) -> torch.Tensor:
     """
     Decode raw MS-SLIM semantics to ``{-1, +1}`` class predictions.
@@ -77,3 +103,38 @@ def decode_binary(y_pred: torch.Tensor) -> torch.Tensor:
         Tensor of ``{-1.0, +1.0}``.
     """
     return torch.where(y_pred >= 0, torch.tensor(_POS), torch.tensor(_NEG)).float()
+
+
+def simplex_codes(n_classes: int) -> torch.Tensor:
+    """
+    Regular simplex class codes in R^(K-1) (formulation section 3).
+
+    Built from the rows of a (K-1)-dimensional regular simplex: unit norm,
+    pairwise inner product -1/(K-1), and they sum to zero. For K=2 this
+    reduces to the {-1, +1} codes used by binary margin_loss (formulation
+    section 7).
+
+    Parameters
+    ----------
+    n_classes : int
+        Number of classes K, at least 2.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape (K, K-1). Row k is the code for class k.
+    """
+    if n_classes < 2:
+        raise ValueError("simplex_codes requires n_classes >= 2")
+    if n_classes == 2:
+        return torch.tensor([[-1.0], [1.0]])
+
+    # Standard construction: K-1 orthonormal directions of the K-point
+    # regular simplex, obtained from the centered (K x K) identity via QR,
+    # then normalized to unit rows.
+    eye = torch.eye(n_classes)
+    centered = eye - eye.mean(dim=0, keepdim=True)
+    q, _ = torch.linalg.qr(centered)
+    codes = q[:, : n_classes - 1]
+    codes = codes / codes.norm(dim=1, keepdim=True)
+    return codes

@@ -46,8 +46,16 @@ def _check_binary_labels(y_true: torch.Tensor) -> None:
 
 
 def _class_balanced_mean(per_obs: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
-    """Average per-class means instead of the per-observation mean (formulation section 8)."""
+    """
+    Average per-class means instead of the per-observation mean (formulation section 8).
+
+    Falls back to the plain mean when one class is absent: ``per_obs[empty].mean()``
+    is NaN, and a NaN fitness is silently selected as the best individual by
+    ``np.argmin`` in ``get_best_min``, so it must never reach the population.
+    """
     pos, neg = y_true > 0, y_true < 0
+    if not pos.any() or not neg.any():
+        return per_obs.mean()
     return 0.5 * (per_obs[pos].mean() + per_obs[neg].mean())
 
 
@@ -127,3 +135,69 @@ def code_regression_loss():
 
     _code_regression_loss.__name__ = "code_regression_loss"
     return _code_regression_loss
+
+
+def multiclass_margin_loss(codes: torch.Tensor, y_rows: torch.Tensor, lam: float = 0.01,
+                           balanced: bool = False):
+    """
+    Joint multiclass squared-hinge margin loss (formulation section 5).
+
+    ``L(S) = mean_i [ 1/(K-1) * sum_{k != y_i} [1 - m_ik]_+^2 + lam * ||s_i||^2 ]``
+    with the normalized margin ``m_ik = (K-1)/K * <s_i, c_{y_i} - c_k>``
+    (formulation section 4). Unlike ``margin_loss``, the hinge terms couple the
+    K-1 semantic coordinates through ``m_ik``; this is the objective that the
+    independent-coordinate reference implementation cannot express.
+
+    Strictly convex in ``S`` with unique optimum ``s_i* = c_{y_i} / (1 + lam)``
+    (formulation section 6.2), independent of K.
+
+    Parameters
+    ----------
+    codes : torch.Tensor
+        Simplex class codes, shape (K, K-1), from ``codes.simplex_codes``.
+    y_rows : torch.Tensor
+        Row index into ``codes`` for each observation, shape (n,) of int64.
+    lam : float, optional
+        Semantic regularization strength (default 0.01).
+    balanced : bool, optional
+        If True, weight the complete per-observation loss by inverse class
+        frequency (formulation section 8), which preserves both the optimum
+        and strict convexity.
+
+    Returns
+    -------
+    Callable[[torch.Tensor], torch.Tensor]
+        ``S -> loss``, where ``S`` has shape (n, K-1).
+    """
+    n_classes = codes.shape[0]
+    true_codes = codes[y_rows]                                   # (n, K-1)
+    scale = (n_classes - 1) / n_classes
+
+    # Per-observation class weights: 1/n_c normalized so a balanced dataset
+    # reproduces the unweighted mean exactly.
+    if balanced:
+        counts = torch.bincount(y_rows, minlength=n_classes).clamp(min=1).float()
+        weights = (1.0 / counts)[y_rows]
+        weights = weights / weights.sum()
+    else:
+        weights = None
+
+    def _multiclass_margin_loss(S: torch.Tensor) -> torch.Tensor:
+        # m[i, k] = (K-1)/K * <s_i, c_y_i - c_k>, computed for all k at once.
+        scores = S @ codes.T                                     # (n, K)
+        true_scores = (S * true_codes).sum(dim=1, keepdim=True)   # (n, 1)
+        margins = scale * (true_scores - scores)                  # (n, K); column y_i is 0
+
+        violation = torch.clamp(1.0 - margins, min=0.0) ** 2
+        # Zero out the true class, which is not a competitor.
+        violation = violation.scatter(1, y_rows.unsqueeze(1), 0.0)
+
+        per_obs = violation.sum(dim=1) / (n_classes - 1) + lam * (S ** 2).sum(dim=1)
+        if weights is not None:
+            return (per_obs * weights).sum()
+        return per_obs.mean()
+
+    _multiclass_margin_loss.__name__ = (
+        f"multiclass_margin_loss(K={n_classes}, lam={lam}, balanced={balanced})"
+    )
+    return _multiclass_margin_loss
