@@ -127,6 +127,41 @@ squared-hinge margin directly on the raw semantics the operators already move:
 L(s) = mean( [1 - y*s]_+^2 + lam * s^2 ),   y in {-1, +1}
 ```
 
+The mismatch this removes: inflate and deflate move the **raw** semantics, but
+the sigmoid path measures error on the **squashed** ones, so the two operate in
+different spaces.
+
+```mermaid
+flowchart TD
+    P["SLIM individual<br/>blocks b = 1..B"] --> S["raw semantics<br/>s = sum_b block_b(x)"]
+
+    S --> SIG["sigmoid(s)"]
+    SIG --> RMSE["RMSE vs {0,1} labels"]
+    RMSE --> FLAT["gradient flattens<br/>where s is most wrong"]
+
+    S --> HINGE["squared hinge<br/>[1 - y*s]_+^2"]
+    S --> REG["semantic penalty<br/>lam * s^2"]
+    HINGE --> L["fitness L(s)"]
+    REG --> L
+    L --> PRESSURE["pressure grows<br/>with the error"]
+
+    S --> PRED["predict: sign(s)"]
+
+    FLAT -.->|"operators move s,<br/>loss measures sigmoid(s)"| S
+    PRESSURE -.->|"operators and loss<br/>share one space"| S
+
+    classDef old fill:#f8d7da,stroke:#c33
+    classDef new fill:#d4edda,stroke:#3a3
+    classDef core fill:#e7e7f5,stroke:#559
+    class SIG,RMSE,FLAT old
+    class HINGE,REG,L,PRESSURE new
+    class P,S,PRED core
+```
+
+Red is the `sigmoid_rmse` path, green is MS-SLIM. Both start from the same raw
+`s`, but only MS-SLIM scores it in the space the operators actually change.
+`lam > 0` pins the optimum at `s* = y / (1 + lam)`.
+
 Pick a technique with `get_strategy`, which binds the label encoding, the
 fitness function, and the prediction decoding together so they cannot be
 mismatched:
@@ -192,6 +227,44 @@ model = slim(
 
 Classes are placed at the corners of a regular simplex, and a prediction is the
 nearest corner. Two architectures are provided.
+
+```mermaid
+flowchart TD
+    Y["labels y in 1..K"] --> C["simplex codes c_k<br/>K corners in R^(K-1)<br/>unit norm, sum to zero"]
+
+    subgraph IND ["fit_multiclass — independent coordinates"]
+        direction TB
+        I1["program 1"] --> IS["stack outputs<br/>s = (s_1 .. s_K-1)"]
+        I2["program K-1"] --> IS
+        IL["each trained alone on<br/>(s_j - c_y[j])^2"] -.-> I1
+        IL -.-> I2
+    end
+
+    subgraph SHR ["fit_shared_blocks — shared blocks"]
+        direction TB
+        B["one block set<br/>r_1 .. r_B, scalar each"] --> M["S = sum_b r_b * a_b"]
+        A["coefficients a_b in R^(K-1)<br/>solved to optimum, convex"] --> M
+        JL["joint margin loss<br/>m_ik couples all classes"] -.-> M
+    end
+
+    C --> IND
+    C --> SHR
+    IS --> PRED["predict: argmax_k &lt;s, c_k&gt;<br/>= nearest corner"]
+    M --> PRED
+
+    classDef geom fill:#e7e7f5,stroke:#559
+    classDef ind fill:#fff3cd,stroke:#c90
+    classDef shr fill:#d4edda,stroke:#3a3
+    class Y,C,PRED geom
+    class I1,I2,IS,IL ind
+    class B,A,M,JL shr
+```
+
+Both share the class geometry and the prediction rule; they differ in what they
+evolve and what they optimize. Independent coordinates train each program on
+plain squared error, because the hinge has no per-coordinate form — the margin
+`m_ik` is joint across all K-1 coordinates at once. Shared blocks optimize that
+joint objective directly.
 
 **Independent coordinates** — evolves K-1 separate programs, one per simplex
 coordinate. Simple and fast; it reproduces MS-SLIM's class geometry and
