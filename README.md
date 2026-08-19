@@ -307,6 +307,11 @@ accuracy = float((model.predict(X_test) == y_test).float().mean())
 print(f"Accuracy: {accuracy:.4f}  blocks: {model.individual.size}")
 ```
 
+Shared blocks require an additive (`SLIM+`) variant and raise `ValueError` otherwise:
+the representation needs semantics linear in the coefficients, and a multiplicative
+operator collapses blocks with `prod`. Binary MS-SLIM and `fit_multiclass` carry no
+such constraint and run on all six variants.
+
 MS-SLIM produces scores and margins, not calibrated probabilities.
 
 ### Running experiments

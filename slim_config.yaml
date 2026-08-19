@@ -77,10 +77,13 @@ copy_parent: true            # bool. (default true)
 slim_version: SLIM+ABS       # "SLIM+ABS" | "SLIM*ABS" | "SLIM+SIG1" | "SLIM*SIG1"
                              #  | "SLIM+SIG2" | "SLIM*SIG2".  (default "SLIM+SIG2")
                              # "+" additive semantics, "*" multiplicative.
-                             # Classification requires a "SLIM+" version:
-                             # shared_blocks.py:231 rejects the others, since the
-                             # semantic decomposition assumes an additive operator.
-                             # SLIM*ABS / SLIM*SIG1 are for regression only.
+                             # All six work for binary classification and for the
+                             # independent multiclass architecture (fit_multiclass).
+                             # Two paths require "SLIM+" and reject the rest:
+                             # shared-block multiclass (shared_blocks.py:231) and
+                             # use_adaptive_inflate (adaptive_inflate.py:120), both
+                             # because they need semantics linear in a coefficient,
+                             # which a multiplicative (prod) collapse destroys.
 
 max_depth: 15                # int > init_depth, or null for unbounded. (default 15)
 
@@ -122,7 +125,8 @@ lam: 0.01                    # float >= 0. (default 0.01)
 
 use_adaptive_inflate: false  # bool. (default false)
                              # Solve for the inflate coefficient instead of sampling
-                             # it from [ms_lower, ms_upper]. Requires "margin".
+                             # it from [ms_lower, ms_upper]. Requires "margin" and an
+                             # additive "SLIM+" version (adaptive_inflate.py:120).
 
 sigmoid_scaling_factor: 1.0  # float > 0. (default 1.0). Used only by "sigmoid_rmse".
 
