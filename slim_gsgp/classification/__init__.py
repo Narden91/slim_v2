@@ -53,6 +53,10 @@ from slim_gsgp.classification.codes import encode_binary, decode_binary
 from slim_gsgp.classification.losses import margin_loss, logistic_loss, code_regression_loss
 from slim_gsgp.classification.strategies import ClassificationStrategy, STRATEGIES, get_strategy
 from slim_gsgp.classification.adaptive_inflate import optimal_alpha, adaptive_inflate
+from slim_gsgp.classification.experiments import run_experiment
+from slim_gsgp.classification.multiclass import (
+    simplex_codes, MulticlassResult, fit_multiclass, predict_multiclass,
+)
 from slim_gsgp.evaluators.fitness_functions import sigmoid_rmse, binary_sign_transform
 
 __all__ = [
@@ -66,6 +70,11 @@ __all__ = [
     "get_strategy",
     "optimal_alpha",
     "adaptive_inflate",
+    "run_experiment",
+    "simplex_codes",
+    "MulticlassResult",
+    "fit_multiclass",
+    "predict_multiclass",
     "sigmoid_rmse",
     "binary_sign_transform",
 ]

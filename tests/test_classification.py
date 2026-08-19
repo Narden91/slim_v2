@@ -21,7 +21,7 @@
 # SOFTWARE.
 """
 Correctness checks for slim_gsgp.classification (MS-SLIM margin loss and
-adaptive inflate). These check the falsifiable mathematical claims in
+adaptive inflate). These check the mathematical claims in
 MS_SLIM_formulation.md sections 2.2 and 11, not general test coverage.
 """
 
@@ -31,6 +31,7 @@ from slim_gsgp.classification.codes import encode_binary, decode_binary
 from slim_gsgp.classification.losses import margin_loss, logistic_loss, code_regression_loss
 from slim_gsgp.classification.adaptive_inflate import optimal_alpha
 from slim_gsgp.classification.strategies import get_strategy, STRATEGIES
+from slim_gsgp.classification.multiclass import simplex_codes
 
 
 def test_encode_binary_maps_zero_one_to_pm1():
@@ -122,3 +123,23 @@ def test_strategy_registry_has_matched_encode_decode():
         )
         assert callable(strategy.encode)
         assert callable(strategy.decode)
+
+
+def test_simplex_codes_is_regular_simplex():
+    """Formulation section 3: unit norm, sum to zero, equal pairwise inner product."""
+    for k in (2, 3, 4, 5, 8):
+        codes = simplex_codes(k)
+        assert codes.shape == (k, k - 1)
+        assert torch.allclose(codes.norm(dim=1), torch.ones(k), atol=1e-5)
+        assert torch.allclose(codes.sum(dim=0), torch.zeros(k - 1), atol=1e-5)
+
+        gram = codes @ codes.T
+        off_diag = gram[~torch.eye(k, dtype=torch.bool)]
+        expected = -1.0 / (k - 1)
+        assert torch.allclose(off_diag, torch.full_like(off_diag, expected), atol=1e-5)
+
+
+def test_simplex_codes_k2_matches_binary_codes():
+    """K=2 must reduce to the {-1,+1} codes margin_loss uses (formulation section 7)."""
+    codes = simplex_codes(2)
+    assert torch.equal(codes, torch.tensor([[-1.0], [1.0]]))

@@ -107,18 +107,22 @@ def logistic_loss():
 
 def code_regression_loss():
     """
-    Plain regression onto the class code: ``mean((y - s)^2)``, ``y in {-1, +1}``.
+    Plain regression onto the class code: ``mean((y - s)^2)``.
 
-    Baseline that isolates the effect of the one-sided hinge margin from the
-    effect of using class codes and a distance-based prediction rule at all
-    (formulation section 14, Question 2).
+    As a binary baseline, ``y in {-1, +1}``: isolates the effect of the
+    one-sided hinge margin from the effect of using class codes and a
+    distance-based prediction rule at all (formulation section 14,
+    Question 2). Also reused, unmodified, as the per-coordinate loss for
+    independent-coordinate multiclass MS-SLIM (``classification.multiclass``,
+    integration plan phase M1), where ``y`` is a continuous simplex-code
+    coordinate rather than +-1 -- squared error is well-defined either way,
+    so no separate label check is applied here.
 
     Returns
     -------
     Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
     """
     def _code_regression_loss(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
-        _check_binary_labels(y_true)
         return torch.mean((y_true - y_pred) ** 2)
 
     _code_regression_loss.__name__ = "code_regression_loss"
