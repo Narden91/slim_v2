@@ -23,7 +23,7 @@
 Experimental campaign for the MS-SLIM manuscript.
 
 Implements the protocol of ``MS_SLIM_research_plan.md``: identical stratified
-splits across methods, at least 30 runs per configuration, paired statistics
+splits across methods, 20 runs per configuration, paired statistics
 with multiple-comparison correction and effect sizes, and one result row per
 (question, dataset, method, seed).
 
@@ -65,7 +65,7 @@ __all__ = [
 # the factor under study.
 DEFAULT_POP_SIZE = 100
 DEFAULT_N_ITER = 100
-DEFAULT_SEEDS = 30
+DEFAULT_SEEDS = 20
 LAMBDA_GRID = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
 MUTATION_STEPS = (0.1, 0.3, 0.5, 1.0, 2.0)
 BINARY_STRATEGIES = ("margin", "logistic", "code_regression", "sigmoid_rmse")
@@ -484,7 +484,7 @@ def main(argv=None):
     parser.add_argument("--datasets", nargs="*", default=None,
                         help="Dataset names; defaults to the question's full set.")
     parser.add_argument("--seeds", type=int, default=DEFAULT_SEEDS,
-                        help="Number of seeds per configuration (default: 30).")
+                        help="Number of seeds per configuration (default: 20).")
     parser.add_argument("--pop-size", type=int, default=DEFAULT_POP_SIZE)
     parser.add_argument("--n-iter", type=int, default=DEFAULT_N_ITER)
     parser.add_argument("--out", type=Path, default=Path("results"),

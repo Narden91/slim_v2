@@ -311,41 +311,31 @@ MS-SLIM produces scores and margins, not calibrated probabilities.
 
 ### Running experiments
 
-`run_experiment` runs one strategy over many seeds on identical splits, so
-results across strategies are paired and directly comparable:
-
-```python
-from slim_gsgp.datasets.data_loader import load_breast_cancer
-from slim_gsgp.classification import run_experiment
-
-X, y = load_breast_cancer(X_y=True)
-
-results = run_experiment(
-    X, y, dataset_name="breast_cancer", strategy_name="margin",
-    seeds=range(30),
-    pop_size=100, n_iter=100, slim_version="SLIM+ABS", lam=0.01,
-    log_level=0, verbose=0,
-)
-
-print(results[["seed", "accuracy", "balanced_accuracy", "f1", "mcc", "auroc"]])
-results.to_csv("margin_breast_cancer.csv", index=False)
-```
-
-Each row carries accuracy, balanced accuracy, F1, MCC, AUROC, AUPRC, node count,
-block count and training time; margin runs additionally report the semantic norm
-and margin statistics. Sweep `lam` or compare strategies with an ordinary loop:
+`run_binary_config` trains and scores one strategy on one seed, deriving a
+stratified train/validation/test split from that seed alone — so the same seed
+gives every strategy the identical split and results are directly paired:
 
 ```python
 import pandas as pd
+from slim_gsgp.classification.campaign import run_binary_config
 
-frames = [
-    run_experiment(X, y, "breast_cancer", name, seeds=range(30),
-                   pop_size=100, n_iter=100, lam=lam, log_level=0, verbose=0)
+results = pd.concat([
+    pd.DataFrame([
+        run_binary_config("breast_cancer", name, seed=seed,
+                          pop_size=100, n_iter=100,
+                          slim_version="SLIM+ABS", lam=0.01)
+        for seed in range(20)
+    ])
     for name in ("margin", "logistic", "sigmoid_rmse")
-    for lam in (0.001, 0.01, 0.1)
-]
-everything = pd.concat(frames, ignore_index=True)
+], ignore_index=True)
+
+print(results.groupby("method")[["accuracy", "balanced_accuracy", "mcc", "auroc"]].mean())
 ```
+
+Each row carries accuracy, balanced accuracy, F1, MCC, AUROC, AUPRC, node count,
+block count and both timings; margin runs additionally report the semantic norm
+and margin statistics. `paired_comparison` turns those rows into Wilcoxon tests
+with Holm correction and effect sizes.
 
 A runnable tour of everything above ships with the package:
 
@@ -358,7 +348,7 @@ datasets, the five research questions, paired statistics — see
 [`MS_SLIM_runbook.md`](MS_SLIM_runbook.md):
 
 ```bash
-python -m slim_gsgp.classification.campaign --question all --seeds 30 --out results/
+python -m slim_gsgp.classification.campaign --question all --seeds 20 --out results/
 ```
 
 

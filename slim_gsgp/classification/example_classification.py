@@ -35,7 +35,7 @@ for real runs.
 import torch
 
 from slim_gsgp.classification import (
-    fit_multiclass, fit_shared_blocks, get_strategy, run_experiment,
+    fit_multiclass, fit_shared_blocks, get_strategy,
 )
 from slim_gsgp.datasets.data_loader import load_breast_cancer
 from slim_gsgp.main_slim import slim
@@ -121,12 +121,17 @@ def multiclass_shared_blocks():
 
 
 def compare_strategies():
-    """Paired comparison across strategies on identical splits."""
-    X, y = load_breast_cancer(X_y=True)
+    """Paired comparison across strategies on identical stratified splits."""
+    import pandas as pd
+    from slim_gsgp.classification.campaign import run_binary_config
+
     for name in ("margin", "logistic", "code_regression", "sigmoid_rmse"):
-        results = run_experiment(X, y, "breast_cancer", name, seeds=range(3),
-                                 slim_version="SLIM+ABS", pop_size=POP_SIZE,
-                                 n_iter=N_ITER, log_level=0, verbose=0)
+        results = pd.DataFrame([
+            run_binary_config("breast_cancer", name, seed=seed,
+                              pop_size=POP_SIZE, n_iter=N_ITER,
+                              slim_version="SLIM+ABS")
+            for seed in range(3)
+        ])
         print(f"[{name:>15}]  accuracy {results.accuracy.mean():.4f}"
               f"  auroc {results.auroc.mean():.4f}"
               f"  nodes {results.nodes_count.mean():.0f}")

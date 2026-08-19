@@ -59,14 +59,13 @@ from slim_gsgp.classification.strategies import ClassificationStrategy, STRATEGI
 from slim_gsgp.classification.adaptive_inflate import optimal_alpha, adaptive_inflate
 from slim_gsgp.evaluators.fitness_functions import sigmoid_rmse, binary_sign_transform
 
-# ``experiments`` and ``multiclass`` import ``main_slim``, which imports
+# ``multiclass`` and ``campaign`` import ``main_slim``, which imports
 # ``config.slim_config``, which imports ``classification.losses`` -- i.e. this
 # package. Importing them eagerly here makes that a cycle, and
 # ``from slim_gsgp.main_slim import slim`` fails outright unless something
 # happens to import this package first. Resolve them on attribute access
 # instead (PEP 562), so the public API is unchanged but the cycle never forms.
 _LAZY = {
-    "run_experiment": "slim_gsgp.classification.experiments",
     "MulticlassResult": "slim_gsgp.classification.multiclass",
     "fit_multiclass": "slim_gsgp.classification.multiclass",
     "predict_multiclass": "slim_gsgp.classification.multiclass",
@@ -105,7 +104,6 @@ __all__ = [
     "get_strategy",
     "optimal_alpha",
     "adaptive_inflate",
-    "run_experiment",
     "simplex_codes",
     "MulticlassResult",
     "fit_multiclass",

@@ -34,7 +34,7 @@ Datasets are fetched from OpenML on first use and cached by scikit-learn under
 raises a clear error rather than silently substituting anything else.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
@@ -71,7 +71,6 @@ class DatasetSpec:
     n_classes: int
     imbalance: str
     rationale: str
-    tags: tuple = field(default_factory=tuple)
 
 
 def _encode_targets(target):
@@ -120,50 +119,53 @@ BINARY_DATASETS = (
     DatasetSpec(
         name="breast_cancer", loader=_sklearn("load_breast_cancer"),
         task="binary", n_classes=2, imbalance="moderate",
-        rationale="Ships with the repo and is the incumbent classification benchmark "
-                  "in this codebase, so it anchors the new results to the old ones. "
-                  "Small (569 x 30) and comparatively easy: a floor, not a challenge.",
-        tags=("small", "reference"),
+        rationale="The incumbent benchmark in this codebase, so it anchors new "
+                  "results to old ones. Small and easy: a floor, not a challenge.",
     ),
     DatasetSpec(
         name="spambase", loader=_openml(44),
         task="binary", n_classes=2, imbalance="moderate",
-        rationale="4601 x 57, ~39% positive. Larger and genuinely harder than "
-                  "breast_cancer, with many weakly informative features -- exercises "
-                  "the search rather than the loss alone.",
-        tags=("medium", "many-features"),
+        rationale="Many weakly informative features, so it exercises the search "
+                  "rather than the loss alone.",
     ),
     DatasetSpec(
         name="phoneme", loader=_openml(1489),
         task="binary", n_classes=2, imbalance="moderate",
-        rationale="5404 x 5, ~29% positive. Low dimensionality but a strongly "
-                  "nonlinear boundary, so performance depends on the evolved "
-                  "structure rather than on feature count.",
-        tags=("medium", "nonlinear"),
+        rationale="Low dimensionality but a strongly nonlinear boundary, so "
+                  "performance depends on the evolved structure, not feature count.",
     ),
     DatasetSpec(
         name="credit_g", loader=_openml(31),
         task="binary", n_classes=2, imbalance="moderate",
-        rationale="1000 rows, 20 raw features expanding to 74 after one-hot. "
-                  "Noisy, low-signal and famously hard to beat the majority class on "
-                  "-- distinguishes methods that overfit from methods that do not.",
-        tags=("small", "categorical", "noisy"),
+        rationale="Noisy, low-signal, and famously hard to beat the majority class "
+                  "on -- separates methods that overfit from methods that do not. "
+                  "Categorical columns expand under one-hot.",
     ),
     DatasetSpec(
         name="pc4", loader=_openml(1049),
+        task="binary", n_classes=2, imbalance="moderate",
+        rationale="Software defects with marked imbalance, where accuracy is "
+                  "uninformative and AUPRC/MCC carry the signal -- exactly what "
+                  "the balanced empirical risk targets.",
+    ),
+    DatasetSpec(
+        name="churn", loader=_openml(40701),
+        task="binary", n_classes=2, imbalance="moderate",
+        rationale="Marked imbalance at medium scale with mixed feature types, "
+                  "filling the gap between pc4 and the severe cases.",
+    ),
+    DatasetSpec(
+        name="ozone", loader=_openml(1487),
         task="binary", n_classes=2, imbalance="severe",
-        rationale="1458 x 37 software-defect data, ~12% positive. Severe imbalance "
-                  "where accuracy is uninformative and AUPRC/MCC carry the signal, "
-                  "which is exactly what the balanced empirical risk targets.",
-        tags=("small", "imbalanced"),
+        rationale="The only benchmark combining high dimensionality with severe "
+                  "imbalance -- separates a loss that handles rare positives from "
+                  "one that merely handles few features.",
     ),
     DatasetSpec(
         name="mammography", loader=_openml(310),
         task="binary", n_classes=2, imbalance="severe",
-        rationale="11183 x 6, ~2.3% positive. Extreme imbalance at scale; the "
-                  "hardest test of whether the semantic regularizer and balanced "
-                  "risk keep the minority class from being ignored.",
-        tags=("large", "imbalanced"),
+        rationale="Extreme imbalance at scale; the hardest test of whether the "
+                  "balanced risk keeps the minority class from being ignored.",
     ),
 )
 
@@ -171,43 +173,52 @@ MULTICLASS_DATASETS = (
     DatasetSpec(
         name="waveform", loader=_openml(60),
         task="multiclass", n_classes=3, imbalance="balanced",
-        rationale="5000 x 40, three balanced classes with heavy feature noise by "
-                  "construction. K=3 keeps the semantic space 2-D while still "
-                  "requiring a real decision boundary.",
-        tags=("medium", "noisy"),
+        rationale="Balanced, with heavy feature noise by construction. K=3 keeps "
+                  "the semantic space 2-D while still requiring a real boundary.",
+    ),
+    DatasetSpec(
+        name="cmc", loader=_openml(23),
+        task="multiclass", n_classes=3, imbalance="moderate",
+        rationale="Three heavily overlapping classes with a low ceiling for every "
+                  "method -- the low-signal counterpart to waveform at the same K.",
     ),
     DatasetSpec(
         name="vehicle", loader=_openml(54),
         task="multiclass", n_classes=4, imbalance="balanced",
-        rationale="846 x 18, four classes, two of which overlap heavily. Small and "
-                  "genuinely difficult -- a case where K-1 independent programs may "
-                  "plausibly diverge from a shared structure.",
-        tags=("small", "overlapping"),
+        rationale="Small, with two heavily overlapping classes: a case where K-1 "
+                  "independent programs may plausibly diverge from a shared structure.",
+    ),
+    DatasetSpec(
+        name="page_blocks", loader=_openml(30),
+        task="multiclass", n_classes=5, imbalance="severe",
+        rationale="Severe multiclass imbalance at scale. Distinguishes a simplex "
+                  "that fails on rare classes from one that fails on many classes; "
+                  "yeast alone confounds the two.",
+    ),
+    DatasetSpec(
+        name="satimage", loader=_openml(182),
+        task="multiclass", n_classes=6, imbalance="moderate",
+        rationale="Moderate K with many correlated spectral features, at a scale "
+                  "where the per-individual cost of K-1 coordinates is visible.",
     ),
     DatasetSpec(
         name="segment", loader=_openml(36),
         task="multiclass", n_classes=7, imbalance="balanced",
-        rationale="2310 x 19, seven balanced classes. Raises K enough that the "
-                  "cost gap between K-1 independent programs and one shared block "
-                  "set becomes measurable, which is the point of Question 4.",
-        tags=("medium", "high-K"),
+        rationale="K high enough that the cost gap between K-1 independent programs "
+                  "and one shared block set becomes measurable -- the point of Q4.",
     ),
     DatasetSpec(
         name="yeast", loader=_openml(181),
         task="multiclass", n_classes=10, imbalance="severe",
-        rationale="1484 x 8, ten classes whose smallest holds 5 rows (0.34%). "
-                  "The hardest case for a symmetric simplex, and "
-                  "the one most likely to expose its limits -- which the plan "
-                  "explicitly wants stated rather than hidden.",
-        tags=("small", "high-K", "imbalanced"),
+        rationale="Ten classes whose smallest holds a handful of rows. The hardest "
+                  "case for a symmetric simplex and the one most likely to expose "
+                  "its limits -- which the plan wants stated, not hidden.",
     ),
     DatasetSpec(
         name="pendigits", loader=_openml(32),
         task="multiclass", n_classes=10, imbalance="balanced",
-        rationale="10992 x 16, ten balanced classes. The scale case: tests whether "
-                  "either multiclass architecture remains tractable when both n and "
-                  "K are large.",
-        tags=("large", "high-K"),
+        rationale="The scale case: does either architecture stay tractable when "
+                  "both n and K are large?",
     ),
 )
 

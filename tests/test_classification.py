@@ -185,7 +185,7 @@ def test_main_slim_imports_without_priming_classification_package():
 
 def test_lazy_exports_still_reachable_from_package():
     import slim_gsgp.classification as classification
-    for name in ("run_experiment", "fit_multiclass", "predict_multiclass", "MulticlassResult"):
+    for name in ("fit_multiclass", "predict_multiclass", "MulticlassResult", "run_question"):
         assert hasattr(classification, name)
 
 
