@@ -282,7 +282,7 @@ def _multiclass_names():
 
 def run_question(question: str, datasets=None, seeds=DEFAULT_SEEDS,
                  pop_size=DEFAULT_POP_SIZE, n_iter=DEFAULT_N_ITER,
-                 progress=True) -> pd.DataFrame:
+                 progress=True, slim_version=None) -> pd.DataFrame:
     """
     Run one experimental question over its datasets and seeds.
 
@@ -301,6 +301,7 @@ def run_question(question: str, datasets=None, seeds=DEFAULT_SEEDS,
     """
     seed_range = range(seeds) if isinstance(seeds, int) else list(seeds)
     rows = []
+    common = {} if slim_version is None else {"slim_version": slim_version}
 
     def _record(fn, label, **kwargs):
         try:
@@ -321,21 +322,21 @@ def run_question(question: str, datasets=None, seeds=DEFAULT_SEEDS,
         for dataset, method, seed in itertools.product(
                 names, ("sigmoid_rmse", "logistic", "margin"), seed_range):
             _record(run_binary_config, method, dataset=dataset, strategy_name=method,
-                    seed=seed, pop_size=pop_size, n_iter=n_iter)
+                    seed=seed, pop_size=pop_size, n_iter=n_iter, **common)
 
     elif question == "q2":
         names = datasets or _binary_names()
         for dataset, method, seed in itertools.product(
                 names, ("margin", "code_regression"), seed_range):
             _record(run_binary_config, method, dataset=dataset, strategy_name=method,
-                    seed=seed, pop_size=pop_size, n_iter=n_iter)
+                    seed=seed, pop_size=pop_size, n_iter=n_iter, **common)
 
     elif question == "q3":
         names = datasets or _binary_names()
         for dataset, lam, seed in itertools.product(names, (0.0,) + LAMBDA_GRID, seed_range):
             _record(run_binary_config, f"margin_lam{lam:g}", dataset=dataset,
                     strategy_name="margin", seed=seed, pop_size=pop_size,
-                    n_iter=n_iter, lam=lam)
+                    n_iter=n_iter, lam=lam, **common)
         for row in rows:
             row["lam"] = float(row["method"].removeprefix("margin_lam"))
 
@@ -344,18 +345,19 @@ def run_question(question: str, datasets=None, seeds=DEFAULT_SEEDS,
         for dataset, architecture, seed in itertools.product(
                 names, ("independent", "shared_blocks"), seed_range):
             _record(run_multiclass_config, architecture, dataset=dataset,
-                    architecture=architecture, seed=seed, pop_size=pop_size, n_iter=n_iter)
+                    architecture=architecture, seed=seed, pop_size=pop_size,
+                    n_iter=n_iter, **common)
 
     elif question == "q5":
         names = datasets or _binary_names()
         for dataset, step, seed in itertools.product(names, MUTATION_STEPS, seed_range):
             _record(run_binary_config, f"random_ms{step:g}", dataset=dataset,
                     strategy_name="margin", seed=seed, pop_size=pop_size,
-                    n_iter=n_iter, ms_lower=step, ms_upper=step)
+                    n_iter=n_iter, ms_lower=step, ms_upper=step, **common)
             _record(run_binary_config, f"adaptive_ms{step:g}", dataset=dataset,
                     strategy_name="margin", seed=seed, pop_size=pop_size,
                     n_iter=n_iter, ms_lower=step, ms_upper=step,
-                    use_adaptive_inflate=True)
+                    use_adaptive_inflate=True, **common)
         for row in rows:
             operator, _, step = row["method"].partition("_ms")
             row["operator"], row["ms"] = operator, float(step)
@@ -487,6 +489,11 @@ def main(argv=None):
                         help="Number of seeds per configuration (default: 20).")
     parser.add_argument("--pop-size", type=int, default=DEFAULT_POP_SIZE)
     parser.add_argument("--n-iter", type=int, default=DEFAULT_N_ITER)
+    parser.add_argument("--slim-version", default=None,
+                        choices=["SLIM+ABS", "SLIM*ABS", "SLIM+SIG1", "SLIM*SIG1",
+                                 "SLIM+SIG2", "SLIM*SIG2"],
+                        help="SLIM variant for every run (default: each fitter's own). "
+                             "Q4's shared-block arm accepts only SLIM+ versions.")
     parser.add_argument("--out", type=Path, default=Path("results"),
                         help="Directory for the result CSVs (default: results/).")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-run progress.")
@@ -500,7 +507,7 @@ def main(argv=None):
         started = time.time()
         results = run_question(question, datasets=args.datasets, seeds=args.seeds,
                                pop_size=args.pop_size, n_iter=args.n_iter,
-                               progress=not args.quiet)
+                               progress=not args.quiet, slim_version=args.slim_version)
         raw_path = args.out / f"{question}.csv"
         results.to_csv(raw_path, index=False)
 

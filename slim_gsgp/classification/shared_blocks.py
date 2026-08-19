@@ -230,9 +230,15 @@ def fit_shared_blocks(
     """
     if not slim_version.startswith("SLIM+"):
         raise ValueError(
-            "shared-block MS-SLIM requires an additive SLIM version (SLIM+...); "
-            f"got {slim_version!r}. Formulation section 12 ties the semantic "
-            "geometry claims to additive SLIM."
+            f"shared-block MS-SLIM requires an additive SLIM version, got "
+            f"{slim_version!r}. The representation is P(x) = sum_b r_b(x) a_b, so "
+            "the semantics must be linear in the coefficients for fit_coefficients "
+            "to be a convex problem; a multiplicative operator collapses the blocks "
+            "with prod, and no per-block coefficient vector can be factored out of "
+            "a product. Use SLIM+ABS, SLIM+SIG1 or SLIM+SIG2 here. Multiplicative "
+            "variants are supported by binary MS-SLIM and by the independent "
+            "multiclass architecture (fit_multiclass), which impose no such "
+            "constraint."
         )
 
     torch.manual_seed(seed)

@@ -25,6 +25,7 @@ adaptive inflate). These check the mathematical claims in
 MS_SLIM_formulation.md sections 2.2 and 11, not general test coverage.
 """
 
+import pytest
 import torch
 
 from slim_gsgp.classification.codes import encode_binary, encode_zero_one, decode_binary
@@ -329,3 +330,73 @@ def test_evaluate_predictions_reports_macro_f1_for_multiclass():
     assert "f1" in binary and "macro_f1" not in binary
     assert "macro_f1" in multi and "f1" not in multi
     assert multi["macro_f1"] == 1.0
+
+
+SLIM_VERSIONS = ("SLIM+ABS", "SLIM*ABS", "SLIM+SIG1",
+                 "SLIM*SIG1", "SLIM+SIG2", "SLIM*SIG2")
+ADDITIVE_VERSIONS = tuple(v for v in SLIM_VERSIONS if v.startswith("SLIM+"))
+
+
+@pytest.mark.parametrize("slim_version", SLIM_VERSIONS)
+@pytest.mark.parametrize("strategy_name", ["margin", "sigmoid_rmse", "logistic",
+                                           "code_regression"])
+def test_binary_classification_runs_on_every_slim_variant(strategy_name, slim_version):
+    """Every binary loss must train and decode under all six SLIM variants.
+
+    Multiplicative variants are included deliberately: their semantics are a
+    product of blocks, so a decoder assuming a sign change around zero could
+    silently degenerate to a constant prediction.
+    """
+    from slim_gsgp.classification.campaign import run_binary_config
+
+    row = run_binary_config("breast_cancer", strategy_name, seed=0,
+                            pop_size=20, n_iter=10, slim_version=slim_version)
+    assert "error" not in row
+    assert 0.0 <= row["accuracy"] <= 1.0
+    assert row["nodes_count"] > 0
+
+
+@pytest.mark.parametrize("slim_version", SLIM_VERSIONS)
+def test_independent_multiclass_runs_on_every_slim_variant(slim_version):
+    """The K-1 independent architecture imposes no operator constraint."""
+    from slim_gsgp.classification.multiclass import fit_multiclass, predict_multiclass
+
+    torch.manual_seed(0)
+    X = torch.randn(60, 4)
+    y = torch.tensor([0.0, 1.0, 2.0] * 20)
+
+    model = fit_multiclass(X, y, pop_size=20, n_iter=8, slim_version=slim_version,
+                           log_level=0, verbose=0, seed=0)
+    predictions = predict_multiclass(model, X)
+    assert predictions.shape == y.shape
+    assert set(predictions.tolist()) <= set(y.tolist())
+
+
+@pytest.mark.parametrize("slim_version", ADDITIVE_VERSIONS)
+def test_shared_blocks_accepts_every_additive_variant(slim_version):
+    from slim_gsgp.classification.shared_blocks import fit_shared_blocks
+
+    torch.manual_seed(0)
+    X = torch.randn(45, 3)
+    y = torch.tensor([0.0, 1.0, 2.0] * 15)
+
+    model = fit_shared_blocks(X, y, pop_size=12, n_iter=4,
+                              slim_version=slim_version, seed=0)
+    assert model.predict(X).shape == y.shape
+
+
+@pytest.mark.parametrize("slim_version", ["SLIM*ABS", "SLIM*SIG1", "SLIM*SIG2"])
+def test_shared_blocks_rejects_multiplicative_variants(slim_version):
+    """P(x) = sum_b r_b(x) a_b needs semantics linear in the coefficients.
+
+    A multiplicative operator collapses blocks with prod, so no per-block
+    coefficient vector can be factored out and fit_coefficients is no longer
+    convex. The rejection must be explicit rather than a silently wrong fit.
+    """
+    from slim_gsgp.classification.shared_blocks import fit_shared_blocks
+
+    X = torch.randn(30, 3)
+    y = torch.tensor([0.0, 1.0, 2.0] * 10)
+
+    with pytest.raises(ValueError, match="additive SLIM version"):
+        fit_shared_blocks(X, y, pop_size=8, n_iter=2, slim_version=slim_version)
