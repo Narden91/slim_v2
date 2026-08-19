@@ -247,7 +247,7 @@ class SLIM_GSGP:
                     gsgp_pop_div_from_vectors(
                         torch.stack(
                             [
-                                torch.sum(ind.train_semantics, dim=0)
+                                    ind.get_train_semantics_collapsed(torch.sum, dim=0)
                                 for ind in population.population
                             ]
                         ),
@@ -256,7 +256,7 @@ class SLIM_GSGP:
                     else gsgp_pop_div_from_vectors(
                         torch.stack(
                             [
-                                torch.prod(ind.train_semantics, dim=0)
+                                    ind.get_train_semantics_collapsed(torch.prod, dim=0)
                                 for ind in population.population
                             ]
                         )
@@ -284,7 +284,7 @@ class SLIM_GSGP:
                     gsgp_pop_div_from_vectors(
                         torch.stack(
                             [
-                                torch.sum(ind.train_semantics, dim=0)
+                                    ind.get_train_semantics_collapsed(torch.sum, dim=0)
                                 for ind in population.population
                             ]
                         ),
@@ -293,7 +293,7 @@ class SLIM_GSGP:
                     else gsgp_pop_div_from_vectors(
                         torch.stack(
                             [
-                                torch.prod(ind.train_semantics, dim=0)
+                                    ind.get_train_semantics_collapsed(torch.prod, dim=0)
                                 for ind in population.population
                             ]
                         )
@@ -490,7 +490,7 @@ class SLIM_GSGP:
             # turning the offspring population into a Population
             offs_pop = Population(offs_pop)
             # calculating the offspring population semantics
-            offs_pop.calculate_semantics(X_train)
+            # offs_pop.calculate_semantics(X_train) - redundant as mutators handle it
 
             # evaluating the offspring population
             offs_pop.evaluate(ffunction, y=y_train, operator=self.operator, n_jobs=n_jobs)
@@ -519,7 +519,7 @@ class SLIM_GSGP:
                         gsgp_pop_div_from_vectors(
                             torch.stack(
                                 [
-                                    torch.sum(ind.train_semantics, dim=0)
+                                        ind.get_train_semantics_collapsed(torch.sum, dim=0)
                                     for ind in population.population
                                 ]
                             ),
@@ -528,7 +528,7 @@ class SLIM_GSGP:
                         else gsgp_pop_div_from_vectors(
                             torch.stack(
                                 [
-                                    torch.prod(ind.train_semantics, dim=0)
+                                        ind.get_train_semantics_collapsed(torch.prod, dim=0)
                                     for ind in population.population
                                 ]
                             )
@@ -558,7 +558,7 @@ class SLIM_GSGP:
                         gsgp_pop_div_from_vectors(
                             torch.stack(
                                 [
-                                    torch.sum(ind.train_semantics, dim=0)
+                                        ind.get_train_semantics_collapsed(torch.sum, dim=0)
                                     for ind in population.population
                                 ]
                             ),
@@ -567,7 +567,7 @@ class SLIM_GSGP:
                         else gsgp_pop_div_from_vectors(
                             torch.stack(
                                 [
-                                    torch.prod(ind.train_semantics, dim=0)
+                                        ind.get_train_semantics_collapsed(torch.prod, dim=0)
                                     for ind in population.population
                                 ]
                             )

@@ -67,6 +67,7 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
          test_elite: bool = slim_gsgp_solve_parameters["test_elite"],
          sigmoid_scaling_factor: float = 1.0,
          lam: float = 0.01,
+         balanced: bool = False,
          use_adaptive_inflate: bool = False):
 
     """
@@ -139,6 +140,9 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
         Semantic L2 regularization strength for the ``margin`` (MS-SLIM), ``logistic``,
         and ``code_regression`` fitness functions (default is 0.01). See
         ``slim_gsgp.classification`` and ``MS_SLIM_formulation.md``.
+    balanced : bool, optional
+        If True, use class-balanced weights for margin-based losses and adaptive
+        inflate (default is False).
     use_adaptive_inflate : bool, optional
         If True and ``fitness_function="margin"``, replace the random inflate mutation
         step with the closed-form-optimal step for that loss (default is False). See
@@ -197,7 +201,7 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
     if fitness_function.lower() in ("margin", "logistic", "code_regression"):
         from slim_gsgp.classification.losses import margin_loss as _margin_loss, \
             logistic_loss as _logistic_loss, code_regression_loss as _code_regression_loss
-        fitness_function_options["margin"] = _margin_loss(lam)
+        fitness_function_options["margin"] = _margin_loss(lam, balanced=balanced)
         fitness_function_options["logistic"] = _logistic_loss()
         fitness_function_options["code_regression"] = _code_regression_loss()
 
@@ -274,7 +278,7 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
             )
         from slim_gsgp.classification.adaptive_inflate import adaptive_inflate as _adaptive_inflate
         slim_gsgp_parameters["inflate_mutator"] = _adaptive_inflate(
-            slim_gsgp_parameters["inflate_mutator"], y_train=y_train, lam=lam, operator=op
+            slim_gsgp_parameters["inflate_mutator"], y_train=y_train, lam=lam, operator=op, balanced=balanced
         )
     slim_gsgp_parameters["initializer"] = initializer_options[initializer]
     slim_gsgp_parameters["ms"] = ms

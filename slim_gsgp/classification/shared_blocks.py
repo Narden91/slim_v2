@@ -120,17 +120,21 @@ def _block_semantics(individual, X) -> torch.Tensor:
             semantics.append(apply_tree(t, X))
         else:
             if len(t.structure) == 3:                    # one-tree mutation block
-                t.structure[1].previous_training = t.train_semantics
+                old_train = t.structure[1].train_semantics
                 t.structure[1].train_semantics = (
                     torch.sigmoid(apply_tree(t.structure[1], X)) if sig
                     else apply_tree(t.structure[1], X)
                 )
+                semantics.append(t.structure[0](*t.structure[1:], testing=False))
+                t.structure[1].train_semantics = old_train
             elif len(t.structure) == 4:                  # two-tree mutation block
-                t.structure[1].previous_training = t.train_semantics
+                old_train1 = t.structure[1].train_semantics
+                old_train2 = t.structure[2].train_semantics
                 t.structure[1].train_semantics = torch.sigmoid(apply_tree(t.structure[1], X))
-                t.structure[2].previous_training = t.train_semantics
                 t.structure[2].train_semantics = torch.sigmoid(apply_tree(t.structure[2], X))
-            semantics.append(t.structure[0](*t.structure[1:], testing=False))
+                semantics.append(t.structure[0](*t.structure[1:], testing=False))
+                t.structure[1].train_semantics = old_train1
+                t.structure[2].train_semantics = old_train2
 
     semantics = [s if s.numel() == len(X) else s.repeat(len(X)) for s in semantics]
     return torch.clamp(torch.stack(semantics), -1e12, 1e12)

@@ -97,6 +97,16 @@ class Individual:
         self.fitness = None
         self.test_fitness = None
 
+    def get_train_semantics_collapsed(self, operator, dim=0):
+        if not hasattr(self, "_train_semantics_collapsed"):
+            self._train_semantics_collapsed = operator(self.train_semantics, dim=dim)
+        return self._train_semantics_collapsed
+
+    def get_test_semantics_collapsed(self, operator, dim=0):
+        if not hasattr(self, "_test_semantics_collapsed"):
+            self._test_semantics_collapsed = operator(self.test_semantics, dim=dim)
+        return self._test_semantics_collapsed
+
     def calculate_semantics(self, inputs, testing=False):
         """
         Calculate the semantics for the Individual. Result is stored as an attribute associated with the object.
@@ -273,34 +283,41 @@ class Individual:
                 semantics.append(apply_tree(t, data))
             else:
                 if len(t.structure) == 3:  # one tree mutation
+                    old_train = t.structure[1].train_semantics
                     # seeing if a logistic function is to be used
                     if sig:
-                        # saving the previous semantics, for safekeeping
-                        t.structure[1].previous_training = t.train_semantics
                         # getting the new training semantics based on the provided data
                         t.structure[1].train_semantics = torch.sigmoid(
                             apply_tree(t.structure[1], data)
                         )
                     else:
-                        # saving the previous semantics, for safekeeping
-                        t.structure[1].previous_training = t.train_semantics
                         # getting the new training semantics based on the provided data
                         t.structure[1].train_semantics = apply_tree(t.structure[1], data)
+                    
+                    # getting the semantics by calling the corresponding operator on the structure
+                    semantics.append(t.structure[0](*t.structure[1:], testing=False))
+                    
+                    # restoring the training semantics
+                    t.structure[1].train_semantics = old_train
 
                 elif len(t.structure) == 4:  # two tree mutation
-                    t.structure[1].previous_training = t.train_semantics
+                    old_train1 = t.structure[1].train_semantics
+                    old_train2 = t.structure[2].train_semantics
+                    
                     t.structure[1].train_semantics = torch.sigmoid(
                         apply_tree(t.structure[1], data)
                     )
-                    # saving the previous semantics, for safekeeping
-                    t.structure[2].previous_training = t.train_semantics
                     # getting the new training semantics based on the provided data
                     t.structure[2].train_semantics = torch.sigmoid(
                         apply_tree(t.structure[2], data)
                     )
 
-                # getting the semantics by calling the corresponding operator on the structure
-                semantics.append(t.structure[0](*t.structure[1:], testing=False))
+                    # getting the semantics by calling the corresponding operator on the structure
+                    semantics.append(t.structure[0](*t.structure[1:], testing=False))
+                    
+                    # restoring the training semantics
+                    t.structure[1].train_semantics = old_train1
+                    t.structure[2].train_semantics = old_train2
 
         # getting the correct torch function based on the used operator (mul or sum)
         operator = torch.sum if operator == "sum" else torch.prod

@@ -47,6 +47,7 @@ def optimal_alpha(
     y: torch.Tensor,
     lam: float,
     iters: int = 3,
+    balanced: bool = False,
 ) -> float:
     """
     Solve ``argmin_alpha margin_loss(s + alpha * r)`` for margin_loss's
@@ -77,16 +78,24 @@ def optimal_alpha(
         The solved mutation step ``alpha*``.
     """
     alpha = 0.0
+    if balanced:
+        pos, neg = y > 0, y < 0
+        w = torch.empty_like(y)
+        w[pos] = 0.5 / pos.sum().clamp(min=1)
+        w[neg] = 0.5 / neg.sum().clamp(min=1)
+    else:
+        w = torch.ones_like(y) / len(y)
+
     for _ in range(iters):
         active = (1.0 - y * (s + alpha * r)) > 0
         yr = y * r
-        num = torch.sum(active * yr * (1.0 - y * s)) - lam * torch.sum(s * r)
-        den = torch.sum(active * r * r) + lam * torch.sum(r * r)
+        num = torch.sum(w * active * yr * (1.0 - y * s)) - lam * torch.sum(w * s * r)
+        den = torch.sum(w * active * r * r) + lam * torch.sum(w * r * r)
         alpha = float(num / den) if den > 0 else 0.0
     return alpha
 
 
-def adaptive_inflate(base_inflate, y_train: torch.Tensor, lam: float, operator: str = "sum"):
+def adaptive_inflate(base_inflate, y_train: torch.Tensor, lam: float, operator: str = "sum", balanced: bool = False):
     """
     Wrap a SLIM ``inflate_mutator`` to use ``optimal_alpha`` instead of a
     random mutation step, for the ``margin_loss`` fitness.
@@ -120,11 +129,14 @@ def adaptive_inflate(base_inflate, y_train: torch.Tensor, lam: float, operator: 
         raise ValueError("adaptive_inflate only supports the 'sum' operator (additive SLIM)")
 
     def _adaptive_inflate(individual, ms, X, **kwargs):
-        s = torch.sum(individual.train_semantics, dim=0)
+        if hasattr(individual, "get_train_semantics_collapsed"):
+            s = individual.get_train_semantics_collapsed(torch.sum, dim=0)
+        else:
+            s = torch.sum(individual.train_semantics, dim=0)
         offs = base_inflate(individual, 1.0, X, **kwargs)
         r = offs.train_semantics[-1]  # block delta at unit step (linear in ms under "sum")
 
-        alpha = optimal_alpha(s, r, y_train, lam)
+        alpha = optimal_alpha(s, r, y_train, lam, balanced=balanced)
 
         offs.train_semantics[-1] = r * alpha
         if offs.test_semantics is not None:

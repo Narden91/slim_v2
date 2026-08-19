@@ -664,20 +664,21 @@ def _evaluate_slim_individual(individual, ffunction, y, testing=False, operator=
         operator = torch.prod
 
     if testing:
-        individual.test_fitness = ffunction(
-            y,
-            torch.clamp(
-                operator(individual.test_semantics, dim=0),
-                -1000000000000.0,
-                1000000000000.0,
-            ),
-        )
+        if individual.test_semantics is not None:
+            individual.test_fitness = ffunction(
+                y,
+                torch.clamp(
+                    individual.get_test_semantics_collapsed(operator, dim=0),
+                    -1000000000000.0,
+                    1000000000000.0,
+                ),
+            )
 
     else:
         individual.fitness = ffunction(
             y,
             torch.clamp(
-                operator(individual.train_semantics, dim=0),
+                individual.get_train_semantics_collapsed(operator, dim=0),
                 -1000000000000.0,
                 1000000000000.0,
             ),
@@ -687,7 +688,7 @@ def _evaluate_slim_individual(individual, ffunction, y, testing=False, operator=
         return ffunction(
                 y,
                 torch.clamp(
-                    operator(individual.train_semantics, dim=0),
+                    individual.get_train_semantics_collapsed(operator, dim=0),
                     -1000000000000.0,
                     1000000000000.0,
                 ),
