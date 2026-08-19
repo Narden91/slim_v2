@@ -353,6 +353,14 @@ A runnable tour of everything above ships with the package:
 python -m slim_gsgp.classification.example_classification
 ```
 
+For the full experimental campaign behind the MS-SLIM manuscript — benchmark
+datasets, the five research questions, paired statistics — see
+[`MS_SLIM_runbook.md`](MS_SLIM_runbook.md):
+
+```bash
+python -m slim_gsgp.classification.campaign --question all --seeds 30 --out results/
+```
+
 
 
 ## License

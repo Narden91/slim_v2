@@ -73,6 +73,12 @@ _LAZY = {
     "fit_shared_blocks": "slim_gsgp.classification.shared_blocks",
     "SharedBlockResult": "slim_gsgp.classification.shared_blocks",
     "fit_coefficients": "slim_gsgp.classification.shared_blocks",
+    "run_question": "slim_gsgp.classification.campaign",
+    "paired_comparison": "slim_gsgp.classification.campaign",
+    "analyse": "slim_gsgp.classification.campaign",
+    "DATASETS": "slim_gsgp.classification.benchmarks",
+    "load_dataset": "slim_gsgp.classification.benchmarks",
+    "describe_datasets": "slim_gsgp.classification.benchmarks",
 }
 
 
@@ -107,6 +113,12 @@ __all__ = [
     "fit_shared_blocks",
     "SharedBlockResult",
     "fit_coefficients",
+    "run_question",
+    "paired_comparison",
+    "analyse",
+    "DATASETS",
+    "load_dataset",
+    "describe_datasets",
     "sigmoid_rmse",
     "binary_sign_transform",
 ]

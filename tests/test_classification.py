@@ -272,3 +272,60 @@ def test_fit_shared_blocks_learns_a_separable_problem():
     accuracy = float((result.predict(X) == y).float().mean())
     assert accuracy > 0.6, f"well-separated 3-class problem only reached {accuracy}"
     assert result.coefficients.shape == (result.individual.size, 2)
+
+
+def test_stratified_split_keeps_every_class_in_both_parts():
+    """Unstratified splits can drop a rare class entirely, voiding AUPRC and MCC."""
+    from slim_gsgp.classification.campaign import stratified_split
+
+    y = torch.cat([torch.zeros(200), torch.ones(6)])       # 3% minority
+    for seed in range(5):
+        train_idx, test_idx = stratified_split(y, p_test=0.2, seed=seed)
+        assert y[test_idx].sum() > 0, "minority class missing from test split"
+        assert y[train_idx].sum() > 0, "minority class missing from train split"
+        assert len(train_idx) + len(test_idx) == len(y)
+        assert set(train_idx.tolist()).isdisjoint(test_idx.tolist())
+
+
+def test_stratified_split_is_seed_reproducible_and_seed_varying():
+    from slim_gsgp.classification.campaign import stratified_split
+
+    y = torch.cat([torch.zeros(80), torch.ones(20)])
+    first, _ = stratified_split(y, 0.25, seed=0)
+    again, _ = stratified_split(y, 0.25, seed=0)
+    other, _ = stratified_split(y, 0.25, seed=1)
+    assert torch.equal(first, again)
+    assert not torch.equal(first, other)
+
+
+def test_paired_comparison_detects_effect_and_respects_null():
+    """A known constant improvement must be significant; noise must not be."""
+    import numpy as np
+    import pandas as pd
+    from slim_gsgp.classification.campaign import paired_comparison
+
+    rng = np.random.default_rng(0)
+    rows = []
+    for seed in range(30):
+        base = rng.normal(0.70, 0.03)
+        rows.append({"dataset": "d", "method": "ref", "seed": seed, "balanced_accuracy": base})
+        rows.append({"dataset": "d", "method": "better", "seed": seed, "balanced_accuracy": base + 0.05})
+        rows.append({"dataset": "d", "method": "same", "seed": seed,
+                     "balanced_accuracy": base + rng.normal(0, 0.001)})
+
+    table = paired_comparison(pd.DataFrame(rows), "balanced_accuracy", "ref")
+    better = table[table["method"] == "better"].iloc[0]
+    same = table[table["method"] == "same"].iloc[0]
+    assert better["significant"] and better["effect_size_rbc"] > 0.9
+    assert not same["significant"]
+
+
+def test_evaluate_predictions_reports_macro_f1_for_multiclass():
+    from slim_gsgp.classification.campaign import evaluate_predictions
+
+    y_true = [0, 1, 2, 0, 1, 2]
+    binary = evaluate_predictions([0, 1, 0, 1], [0, 1, 0, 1], n_classes=2)
+    multi = evaluate_predictions(y_true, y_true, n_classes=3)
+    assert "f1" in binary and "macro_f1" not in binary
+    assert "macro_f1" in multi and "f1" not in multi
+    assert multi["macro_f1"] == 1.0

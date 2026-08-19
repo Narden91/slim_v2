@@ -60,3 +60,19 @@ slim_gsgp.classification.experiments
    :members:
    :undoc-members:
    :show-inheritance:
+
+slim_gsgp.classification.benchmarks
+-------------------------------------
+
+.. automodule:: slim_gsgp.classification.benchmarks
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+slim_gsgp.classification.campaign
+-----------------------------------
+
+.. automodule:: slim_gsgp.classification.campaign
+   :members:
+   :undoc-members:
+   :show-inheritance:
