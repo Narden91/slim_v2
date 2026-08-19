@@ -20,23 +20,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 """
-Binary classification utilities for SLIM_GSGP.
+Deprecated: use ``slim_gsgp.classification`` instead.
 
-This subpackage follows the approach of Bakurov et al. (2022) for adapting
-GSGP-based algorithms to binary classification:
-
-- During training: the tree outputs are passed through a sigmoid to bound them
-  in [0, 1], and RMSE is computed against binary labels.
-- At prediction time: negative outputs are mapped to class 0 and non-negative
-  outputs to class 1 via ``binary_sign_transform``.
-
-Relevant fitness function:
-    ``sigmoid_rmse``  – registered in ``slim_gsgp.config.slim_config.fitness_function_options``
-
-Relevant prediction helper:
-    ``binary_sign_transform``  – imported from ``slim_gsgp.evaluators.fitness_functions``
+This subpackage originally held only the sigmoid+RMSE approach of Bakurov et
+al. (2022). It is kept as a backward-compatible re-export now that
+``slim_gsgp.classification`` also provides the margin-based MS-SLIM loss and
+a general ``ClassificationStrategy`` mechanism for choosing between them.
 """
 
-from slim_gsgp.evaluators.fitness_functions import sigmoid_rmse, binary_sign_transform
+from slim_gsgp.classification import sigmoid_rmse, binary_sign_transform
 
 __all__ = ["sigmoid_rmse", "binary_sign_transform"]

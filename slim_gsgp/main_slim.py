@@ -65,7 +65,9 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
          n_jobs: int = slim_gsgp_solve_parameters["n_jobs"],
          tournament_size: int = 2,
          test_elite: bool = slim_gsgp_solve_parameters["test_elite"],
-         sigmoid_scaling_factor: float = 1.0):
+         sigmoid_scaling_factor: float = 1.0,
+         lam: float = 0.01,
+         use_adaptive_inflate: bool = False):
 
     """
     Main function to execute the SLIM GSGP algorithm on specified datasets.
@@ -133,6 +135,14 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
     sigmoid_scaling_factor : float, optional
         Scaling factor for the sigmoid used in the ``sigmoid_rmse`` fitness function.
         Only relevant when ``fitness_function="sigmoid_rmse"`` (default is 1.0).
+    lam : float, optional
+        Semantic L2 regularization strength for the ``margin`` (MS-SLIM), ``logistic``,
+        and ``code_regression`` fitness functions (default is 0.01). See
+        ``slim_gsgp.classification`` and ``MS_SLIM_formulation.md``.
+    use_adaptive_inflate : bool, optional
+        If True and ``fitness_function="margin"``, replace the random inflate mutation
+        step with the closed-form-optimal step for that loss (default is False). See
+        ``slim_gsgp.classification.adaptive_inflate``.
 
     Returns
     -------
@@ -182,6 +192,14 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
     if fitness_function.lower() == "sigmoid_rmse":
         from slim_gsgp.evaluators.fitness_functions import sigmoid_rmse as _sigmoid_rmse
         fitness_function_options["sigmoid_rmse"] = _sigmoid_rmse(sigmoid_scaling_factor)
+
+    # if using a margin-based loss, rebuild it with the requested regularization strength
+    if fitness_function.lower() in ("margin", "logistic", "code_regression"):
+        from slim_gsgp.classification.losses import margin_loss as _margin_loss, \
+            logistic_loss as _logistic_loss, code_regression_loss as _code_regression_loss
+        fitness_function_options["margin"] = _margin_loss(lam)
+        fitness_function_options["logistic"] = _logistic_loss()
+        fitness_function_options["code_regression"] = _code_regression_loss()
 
     # creating a list with the valid available fitness functions
     valid_fitnesses = list(fitness_function_options)
@@ -248,6 +266,16 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
         operator=slim_gsgp_parameters['operator'],
         sig=sig
     )
+    if use_adaptive_inflate:
+        if fitness_function.lower() != "margin" or op != "sum":
+            raise ValueError(
+                "use_adaptive_inflate requires fitness_function='margin' and an "
+                "additive slim_version (e.g. 'SLIM+ABS')"
+            )
+        from slim_gsgp.classification.adaptive_inflate import adaptive_inflate as _adaptive_inflate
+        slim_gsgp_parameters["inflate_mutator"] = _adaptive_inflate(
+            slim_gsgp_parameters["inflate_mutator"], y_train=y_train, lam=lam, operator=op
+        )
     slim_gsgp_parameters["initializer"] = initializer_options[initializer]
     slim_gsgp_parameters["ms"] = ms
     slim_gsgp_parameters['p_inflate'] = p_inflate

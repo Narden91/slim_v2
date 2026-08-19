@@ -25,6 +25,7 @@ from slim_gsgp.algorithms.GSGP.operators.crossover_operators import geometric_cr
 from slim_gsgp.algorithms.SLIM_GSGP.operators.mutators import (deflate_mutation)
 from slim_gsgp.selection.selection_algorithms import tournament_selection_min
 from slim_gsgp.evaluators.fitness_functions import *
+from slim_gsgp.classification.losses import margin_loss, logistic_loss, code_regression_loss
 from slim_gsgp.utils.utils import (get_best_min, protected_div)
 
 # Define functions and constants
@@ -97,6 +98,9 @@ fitness_function_options = {
     "signed_errors": signed_errors,
     "r2": r2_score,
     "sigmoid_rmse": sigmoid_rmse(1.0),
+    "margin": margin_loss(0.01),
+    "logistic": logistic_loss(),
+    "code_regression": code_regression_loss(),
 }
 
 initializer_options = {
