@@ -136,6 +136,7 @@ the sigmoid path measures error on the **squashed** ones, so the two operate in
 different spaces.
 
 ```mermaid
+%%{init: {'theme':'base', 'themeVariables': {'fontSize':'18px', 'primaryTextColor':'#000000', 'secondaryTextColor':'#000000', 'tertiaryTextColor':'#000000', 'textColor':'#000000'}}}%%
 flowchart TD
     P["SLIM individual<br/>blocks b = 1..B"] --> S["raw semantics<br/>s = sum_b block_b(x)"]
 
@@ -234,6 +235,7 @@ Classes are placed at the corners of a regular simplex, and a prediction is the
 nearest corner. Two architectures are provided.
 
 ```mermaid
+%%{init: {'theme':'base', 'themeVariables': {'fontSize':'18px', 'primaryTextColor':'#000000', 'secondaryTextColor':'#000000', 'tertiaryTextColor':'#000000', 'textColor':'#000000'}}}%%
 flowchart TD
     Y["labels y in 1..K"] --> C["simplex codes c_k<br/>K corners in R^(K-1)<br/>unit norm, sum to zero"]
 
