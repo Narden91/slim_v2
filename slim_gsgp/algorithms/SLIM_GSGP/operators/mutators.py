@@ -407,7 +407,7 @@ def inflate_mutation(FUNCTIONS, TERMINALS,CONSTANTS,two_trees=True,operator="sum
                     (
                         new_block.train_semantics.unsqueeze(0)
                         if new_block.train_semantics.shape != torch.Size([])
-                        else new_block.train_semantics.repeat(len(X)).unsqueeze(0)
+                        else new_block.train_semantics.expand(len(X)).unsqueeze(0)
                     ),
                 ], dim=0
             ),
@@ -419,7 +419,7 @@ def inflate_mutation(FUNCTIONS, TERMINALS,CONSTANTS,two_trees=True,operator="sum
                             (
                                 new_block.test_semantics.unsqueeze(0)
                                 if new_block.test_semantics.shape != torch.Size([])
-                                else new_block.test_semantics.repeat(len(X_test)).unsqueeze(0)
+                                else new_block.test_semantics.expand(len(X_test)).unsqueeze(0)
                             ),
                         ], dim=0
                     )

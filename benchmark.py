@@ -1,46 +1,75 @@
+"""Repeatable end-to-end SLIM benchmark for the two bundled sklearn datasets."""
+
+import argparse
+import statistics
 import time
+
 import torch
 from sklearn.datasets import load_breast_cancer, load_diabetes
 from sklearn.model_selection import train_test_split
+
 from slim_gsgp.main_slim import slim
-import sys
-import warnings
-warnings.filterwarnings('ignore')
 
-def run_benchmark(dataset_name, dataset_loader):
-    print(f"--- Benchmarking {dataset_name} (500 gens) ---")
+
+def _synchronize(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def run_benchmark(dataset_name, dataset_loader, *, generations=500, repeats=3, device="cpu"):
+    device = torch.device(device)
     data = dataset_loader()
-    X, y = data.data, data.target
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(
+        data.data, data.target, test_size=0.2, random_state=42
+    )
+    X_train = torch.as_tensor(X_train, dtype=torch.float32, device=device)
+    y_train = torch.as_tensor(y_train, dtype=torch.float32, device=device)
+    X_test = torch.as_tensor(X_test, dtype=torch.float32, device=device)
+    y_test = torch.as_tensor(y_test, dtype=torch.float32, device=device)
 
-    X_train = torch.tensor(X_train, dtype=torch.float32)
-    y_train = torch.tensor(y_train, dtype=torch.float32)
-    X_test = torch.tensor(X_test, dtype=torch.float32)
-    y_test = torch.tensor(y_test, dtype=torch.float32)
-
-    start_time = time.time()
-    try:
-        slim(
-            X_train=X_train, 
-            y_train=y_train, 
-            X_test=X_test, 
-            y_test=y_test, 
-            dataset_name=dataset_name, 
+    timings = []
+    for repeat in range(repeats):
+        if device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(device)
+        _synchronize(device)
+        start = time.perf_counter()
+        elite = slim(
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            y_test=y_test,
+            dataset_name=dataset_name,
             slim_version="SLIM+SIG1",
             pop_size=100,
-            n_iter=500,
+            n_iter=generations,
             log_level=0,
             verbose=0,
-            n_jobs=1
+            seed=42,
         )
-    except Exception as e:
-        print(f"Error during solve: {e}")
-    elapsed = time.time() - start_time
-    
-    print(f"{dataset_name} took {elapsed:.2f} seconds for 500 iterations.")
-    return elapsed
+        _synchronize(device)
+        elapsed = time.perf_counter() - start
+        timings.append(elapsed)
+        print(f"{dataset_name} run {repeat + 1}/{repeats}: {elapsed:.3f}s, fitness={elite.fitness:.8g}")
+
+    result = {
+        "median_seconds": statistics.median(timings),
+        "min_seconds": min(timings),
+        "max_seconds": max(timings),
+    }
+    if device.type == "cuda":
+        result["peak_allocated_mib"] = torch.cuda.max_memory_allocated(device) / 2**20
+        result["peak_reserved_mib"] = torch.cuda.max_memory_reserved(device) / 2**20
+    print(f"{dataset_name}: {result}")
+    return result
+
 
 if __name__ == "__main__":
-    t1 = run_benchmark("Breast Cancer", load_breast_cancer)
-    t2 = run_benchmark("Diabetes", load_diabetes)
-    print(f"RESULTS: {t1:.2f}, {t2:.2f}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--generations", type=int, default=500)
+    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--device", default="cpu")
+    args = parser.parse_args()
+
+    print(f"torch={torch.__version__}, device={args.device}, threads={torch.get_num_threads()}")
+    run_benchmark("Breast Cancer", load_breast_cancer, generations=args.generations, repeats=args.repeats, device=args.device)
+    run_benchmark("Diabetes", load_diabetes, generations=args.generations, repeats=args.repeats, device=args.device)

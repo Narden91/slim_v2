@@ -25,9 +25,6 @@ Selection operator implementation.
 
 import random
 
-import numpy as np
-
-
 def tournament_selection_min(pool_size):
     """
     Returns a function that performs tournament selection to select an individual with the lowest fitness from a
@@ -73,7 +70,7 @@ def tournament_selection_min(pool_size):
             The individual with the lowest fitness in the pool.
         """
         pool = random.choices(pop.population, k=pool_size)
-        return pool[np.argmin([ind.fitness for ind in pool])]
+        return min(pool, key=lambda individual: individual.fitness)
 
     return ts
 
@@ -122,7 +119,7 @@ def tournament_selection_max(pool_size):
             The individual with the highest fitness in the pool.
         """
         pool = random.choices(pop.population, k=pool_size)
-        return pool[np.argmax([ind.fitness for ind in pool])]
+        return max(pool, key=lambda individual: individual.fitness)
 
     return ts
 

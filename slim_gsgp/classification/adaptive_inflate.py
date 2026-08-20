@@ -1,44 +1,18 @@
-# MIT License
-#
-# Copyright (c) 2024 DALabNOVA
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-"""
-Adaptive inflate mutation for margin_loss (MS_SLIM_formulation.md, section 11).
-
-Instead of drawing the new block's mutation step ``ms`` at random, solve for
-the step that minimizes ``margin_loss(s + alpha * r)`` directly, where ``s``
-is the parent's current (collapsed) semantics and ``r`` is the candidate
-block's raw semantics. This is a 1-D strictly-convex piecewise-quadratic
-problem; solved here by a few fixed-point iterations on the active hinge set
-rather than an exact breakpoint sweep (see integration plan, section 3).
-
-Only defined for additive ("sum" operator) SLIM: the block's contribution to
-the individual's semantics is ``alpha * r`` -- linear in ``alpha`` -- only
-under the sum operator. Under "prod" the update is multiplicative
-(``1 + alpha * r``), which is out of scope for this method (formulation
-section 12).
-"""
+"""Exact adaptive inflate mutation for the binary squared-hinge margin loss."""
 
 import torch
 
 __all__ = ["optimal_alpha", "adaptive_inflate"]
+
+
+def _weights(y: torch.Tensor, balanced: bool) -> torch.Tensor:
+    if not balanced:
+        return torch.full_like(y, 1.0 / y.numel())
+    positive, negative = y > 0, y < 0
+    weights = torch.empty_like(y)
+    weights[positive] = 0.5 / positive.sum().clamp(min=1)
+    weights[negative] = 0.5 / negative.sum().clamp(min=1)
+    return weights
 
 
 def optimal_alpha(
@@ -46,103 +20,107 @@ def optimal_alpha(
     r: torch.Tensor,
     y: torch.Tensor,
     lam: float,
-    iters: int = 3,
+    iters: int | None = None,
     balanced: bool = False,
-) -> float:
+) -> torch.Tensor:
+    """Return the exact minimizer of ``margin_loss(s + alpha * r)``.
+
+    ``r`` is the affine direction. ``iters`` remains accepted for callers of
+    the old fixed-point implementation but is deliberately ignored.
     """
-    Solve ``argmin_alpha margin_loss(s + alpha * r)`` for margin_loss's
-    ``[1 - y*(s + alpha*r)]_+^2 + lam*(s + alpha*r)^2``.
+    del iters
+    if s.ndim != r.ndim or s.ndim != y.ndim or s.ndim != 1:
+        raise ValueError("s, r, and y must be 1-dimensional tensors")
+    if not (s.shape == r.shape == y.shape):
+        raise ValueError("s, r, and y must have the same shape")
 
-    Fixed-point iteration on the active hinge set (formulation section 11):
-    on a fixed active set the objective is an exact quadratic in ``alpha``,
-    solved in closed form; recomputing the active set after each solve
-    converges in a handful of steps since the set only shrinks or grows at
-    isolated breakpoints.
+    y = y.to(dtype=s.dtype, device=s.device)
+    r = r.to(dtype=s.dtype, device=s.device)
+    weights = _weights(y, balanced)
+    a = 1.0 - y * s
+    b = y * r
+    nonzero = b != 0
 
-    Parameters
-    ----------
-    s : torch.Tensor
-        Parent individual's current train semantics (1-D, length n).
-    r : torch.Tensor
-        Candidate block's raw train semantics (1-D, length n).
-    y : torch.Tensor
-        Labels in ``{-1, +1}`` (1-D, length n).
-    lam : float
-        Semantic regularization strength, matching the ``margin_loss`` in use.
-    iters : int, optional
-        Number of fixed-point iterations (default 3).
+    reg_a = float(lam) * torch.sum(weights * r.square())
+    reg_b = -float(lam) * torch.sum(weights * s * r)
+    reg_c = float(lam) * torch.sum(weights * s.square())
 
-    Returns
-    -------
-    float
-        The solved mutation step ``alpha*``.
-    """
-    alpha = 0.0
-    if balanced:
-        pos, neg = y > 0, y < 0
-        w = torch.empty_like(y)
-        w[pos] = 0.5 / pos.sum().clamp(min=1)
-        w[neg] = 0.5 / neg.sum().clamp(min=1)
-    else:
-        w = torch.ones_like(y) / len(y)
+    # At alpha=-infinity, b>0 hinges are active. Crossing a sorted
+    # breakpoint removes a positive-b term or adds a negative-b term.
+    active_left = b > 0
+    q = weights * b.square()
+    linear = weights * a * b
+    constant = weights * a.square()
+    initial_a = reg_a + q[active_left].sum()
+    initial_b = reg_b + linear[active_left].sum()
+    initial_c = reg_c + constant[active_left].sum()
 
-    for _ in range(iters):
-        active = (1.0 - y * (s + alpha * r)) > 0
-        yr = y * r
-        num = torch.sum(w * active * yr * (1.0 - y * s)) - lam * torch.sum(w * s * r)
-        den = torch.sum(w * active * r * r) + lam * torch.sum(w * r * r)
-        alpha = float(num / den) if den > 0 else 0.0
-    return alpha
+    if not nonzero.any():
+        return torch.zeros((), dtype=s.dtype, device=s.device)
+
+    breakpoints, order = torch.sort(a[nonzero] / b[nonzero])
+    event_b = b[nonzero][order]
+    sign = torch.where(event_b > 0, -torch.ones_like(event_b), torch.ones_like(event_b))
+    event_q = q[nonzero][order]
+    event_linear = linear[nonzero][order]
+    event_constant = constant[nonzero][order]
+
+    coefficients_a = torch.cat((initial_a.unsqueeze(0), initial_a.unsqueeze(0) + torch.cumsum(sign * event_q, 0)))
+    coefficients_b = torch.cat((initial_b.unsqueeze(0), initial_b.unsqueeze(0) + torch.cumsum(sign * event_linear, 0)))
+    coefficients_c = torch.cat((initial_c.unsqueeze(0), initial_c.unsqueeze(0) + torch.cumsum(sign * event_constant, 0)))
+
+    roots = torch.where(coefficients_a > 0, coefficients_b / coefficients_a, torch.zeros_like(coefficients_a))
+    lower = torch.cat((torch.full_like(breakpoints[:1], -torch.inf), breakpoints))
+    upper = torch.cat((breakpoints, torch.full_like(breakpoints[:1], torch.inf)))
+    candidates = torch.minimum(torch.maximum(roots, lower), upper)
+    candidates = torch.cat((candidates, torch.zeros(1, dtype=s.dtype, device=s.device)))
+
+    # Each interval is an exact quadratic, including its endpoints. Evaluating
+    # all interval minimizers handles repeated breakpoints and lambda=0.
+    losses = coefficients_a * candidates[:-1].square() - 2 * coefficients_b * candidates[:-1] + coefficients_c
+    zero_loss = torch.sum(weights * torch.clamp(a, min=0).square()) + reg_c
+    losses = torch.cat((losses, zero_loss.unsqueeze(0)))
+    minimum = losses.min()
+    tied_distance = torch.where(losses == minimum, candidates.abs(), torch.full_like(candidates, torch.inf))
+    return candidates[torch.argmin(tied_distance)]
 
 
 def adaptive_inflate(base_inflate, y_train: torch.Tensor, lam: float, operator: str = "sum", balanced: bool = False):
+    """Wrap an inflate mutator with an exact margin-loss line search.
+
+    For addition the search direction is the raw block ``r``. For product
+    variants, ``s * (1 + alpha*r) = s + alpha*(s*r)``, so the same convex
+    solver applies with direction ``s*r``. Random-step SLIM* is unchanged
+    unless this opt-in wrapper is requested.
     """
-    Wrap a SLIM ``inflate_mutator`` to use ``optimal_alpha`` instead of a
-    random mutation step, for the ``margin_loss`` fitness.
-
-    Calls ``base_inflate`` once with ``ms=1`` to obtain the candidate block's
-    raw semantics ``r`` (the block delta at unit step, since the sum-operator
-    delta rules are linear in ``ms``), solves for ``alpha*``, then rescales
-    the resulting offspring's new block and total semantics by ``alpha*`` --
-    avoiding a second, more expensive call into ``base_inflate``.
-
-    Parameters
-    ----------
-    base_inflate : Callable
-        An inflate-mutation function as built by
-        ``slim_gsgp.algorithms.SLIM_GSGP.operators.mutators.inflate_mutation``.
-    y_train : torch.Tensor
-        Training labels in ``{-1, +1}``, matching the individuals being mutated.
-    lam : float
-        Semantic regularization strength, matching the ``margin_loss`` in use.
-    operator : str, optional
-        Must be "sum" -- adaptive inflate is only defined for additive SLIM
-        (default "sum").
-
-    Returns
-    -------
-    Callable
-        A drop-in replacement inflate mutator with the same signature as
-        ``base_inflate``.
-    """
-    if operator != "sum":
-        raise ValueError("adaptive_inflate only supports the 'sum' operator (additive SLIM)")
+    if operator not in ("sum", "mul"):
+        raise ValueError("adaptive_inflate operator must be 'sum' or 'mul'")
 
     def _adaptive_inflate(individual, ms, X, **kwargs):
-        if hasattr(individual, "get_train_semantics_collapsed"):
-            s = individual.get_train_semantics_collapsed(torch.sum, dim=0)
+        collapse = torch.sum if operator == "sum" else torch.prod
+        s = collapse(individual.train_semantics, dim=0)
+        offspring = base_inflate(individual, 1.0, X, **kwargs)
+        unit_block = offspring.train_semantics[-1]
+
+        if operator == "sum":
+            raw_block = unit_block
+            direction = raw_block
         else:
-            s = torch.sum(individual.train_semantics, dim=0)
-        offs = base_inflate(individual, 1.0, X, **kwargs)
-        r = offs.train_semantics[-1]  # block delta at unit step (linear in ms under "sum")
+            raw_block = unit_block - 1.0
+            direction = s * raw_block
 
-        alpha = optimal_alpha(s, r, y_train, lam, balanced=balanced)
+        alpha = optimal_alpha(s, direction, y_train, lam, balanced=balanced)
+        if operator == "sum":
+            offspring.train_semantics[-1] = raw_block * alpha
+            if offspring.test_semantics is not None:
+                offspring.test_semantics[-1] = offspring.test_semantics[-1] * alpha
+        else:
+            offspring.train_semantics[-1] = 1.0 + alpha * raw_block
+            if offspring.test_semantics is not None:
+                offspring.test_semantics[-1] = 1.0 + alpha * (offspring.test_semantics[-1] - 1.0)
 
-        offs.train_semantics[-1] = r * alpha
-        if offs.test_semantics is not None:
-            offs.test_semantics[-1] = offs.test_semantics[-1] * alpha
-        if hasattr(offs, "collection"):
-            offs.collection[-1].structure[-1] = alpha
-        return offs
+        if hasattr(offspring, "collection"):
+            offspring.collection[-1].structure[-1] = float(alpha)
+        return offspring
 
     return _adaptive_inflate

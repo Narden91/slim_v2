@@ -8,7 +8,7 @@ setup(
     install_requires=[
         'numpy',
         'pandas',
-        'torch',
+        'torch>=2.4.1,<3',
         'scipy',
         'scikit-learn',
         'joblib',

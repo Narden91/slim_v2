@@ -141,8 +141,13 @@ def r2_score(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
     dim = len(y_pred.shape) - 1
     ss_res = torch.sum(torch.square(y_true - y_pred), dim=dim)
     ss_tot = torch.sum(torch.square(y_true - torch.mean(y_true)))
-    r2 = 1 - (ss_res / ss_tot)
-    return r2
+    # Match the useful finite convention for a constant target: a perfect
+    # prediction scores 1, every other prediction scores 0.
+    return torch.where(
+        ss_tot == 0,
+        torch.where(ss_res == 0, torch.ones_like(ss_res), torch.zeros_like(ss_res)),
+        1 - (ss_res / ss_tot),
+    )
 
 
 def sigmoid_rmse(scaling_factor: float = 1.0):

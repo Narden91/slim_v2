@@ -207,10 +207,11 @@ the size-control mechanism.
 
 ### Adaptive inflate
 
-Because the margin loss is convex and inflate changes the semantics linearly,
-the best mutation step for a new block can be solved for instead of guessed.
-Pass `use_adaptive_inflate=True` (requires `fitness_function="margin"` and an
-additive `SLIM+` version):
+Because the margin loss is convex and inflate is affine in its mutation step,
+the best mutation step for a new block is solved exactly instead of guessed.
+Pass `use_adaptive_inflate=True` (requires `fitness_function="margin"`). It
+works for additive `SLIM+` and opt-in multiplicative `SLIM*` variants; the
+published random-step variants are unchanged by default:
 
 ```python
 model = slim(

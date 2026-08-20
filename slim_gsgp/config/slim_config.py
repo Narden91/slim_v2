@@ -59,7 +59,6 @@ slim_gsgp_solve_parameters = {
     "n_elites": 1,
     "log": 1,
     "verbose": 1,
-    "n_jobs": 1,
     "test_elite": True
 }
 
@@ -95,7 +94,6 @@ fitness_function_options = {
     "mse": mse,
     "mae": mae,
     "mae_int": mae_int,
-    "signed_errors": signed_errors,
     "r2": r2_score,
     "sigmoid_rmse": sigmoid_rmse(1.0),
     "margin": margin_loss(0.01),

@@ -27,6 +27,7 @@ MS_SLIM_formulation.md sections 2.2 and 11, not general test coverage.
 
 import pytest
 import torch
+import math
 
 from slim_gsgp.classification.codes import encode_binary, encode_zero_one, decode_binary
 from slim_gsgp.classification.losses import (
@@ -116,6 +117,37 @@ def test_optimal_alpha_beats_random_alpha():
     for _ in range(50):
         alpha = float((torch.rand(1) - 0.5) * 10.0)
         assert loss_star <= float(loss(y, s + alpha * r)) + 1e-5
+
+
+def test_optimal_alpha_matches_dense_reference_after_active_set_changes():
+    """Regression for the former three-step fixed-point approximation."""
+    s = torch.tensor([-1.2, -0.4, 0.1, 0.7, 1.4, 2.1])
+    r = torch.tensor([0.8, -1.3, 0.6, 1.7, -0.9, 0.4])
+    y = torch.tensor([-1.0, 1.0, -1.0, 1.0, -1.0, 1.0])
+    loss = margin_loss(lam=0.07)
+    alpha = optimal_alpha(s, r, y, 0.07)
+    reference = torch.linspace(-6.0, 6.0, 24_001)
+    reference_loss = torch.stack([loss(y, s + candidate * r) for candidate in reference]).min()
+    assert float(loss(y, s + alpha * r)) <= float(reference_loss) + 1e-5
+
+
+def test_adaptive_inflate_supports_opt_in_multiplicative_margin():
+    from slim_gsgp.main_slim import slim
+
+    X = torch.tensor([[0.0], [0.5], [1.0], [1.5], [2.0], [2.5]])
+    y = torch.tensor([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0])
+    model = slim(
+        X,
+        y,
+        fitness_function="margin",
+        slim_version="SLIM*SIG1",
+        use_adaptive_inflate=True,
+        pop_size=8,
+        n_iter=2,
+        log_level=0,
+        reconstruct=True,
+    )
+    assert math.isfinite(model.fitness)
 
 
 def test_strategy_registry_has_matched_encode_decode():
