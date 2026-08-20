@@ -5,6 +5,9 @@ Classification for SLIM_GSGP: the margin-based MS-SLIM objective, the raw-score
 baselines it is compared against, multiclass support via simplex class codes,
 and an experiment harness.
 
+For the repository-level guide to the method, supported variants, and core
+SLIM runtime and memory work, see ``MS_SLIM_overview.md`` in the project root.
+
 slim_gsgp.classification.losses
 ---------------------------------
 

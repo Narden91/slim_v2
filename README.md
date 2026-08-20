@@ -118,6 +118,10 @@ print(f"Accuracy: {acc:.4f}")
 
 ### Classification with MS-SLIM (margin loss)
 
+For a concise description of the method, implementation limits, and the core
+SLIM speed and memory changes, see
+[`MS_SLIM_overview.md`](MS_SLIM_overview.md).
+
 `sigmoid_rmse` above squashes raw outputs through a sigmoid before measuring
 error. The sigmoid saturates where a program is most wrong, so the search feels
 almost no pressure exactly there. **MS-SLIM** removes the sigmoid and measures a
