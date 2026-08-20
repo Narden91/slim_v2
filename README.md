@@ -136,7 +136,7 @@ the sigmoid path measures error on the **squashed** ones, so the two operate in
 different spaces.
 
 ```mermaid
-%%{init: {'theme':'base', 'themeVariables': {'fontSize':'18px', 'primaryTextColor':'#000000', 'secondaryTextColor':'#000000', 'tertiaryTextColor':'#000000', 'textColor':'#000000'}}}%%
+%%{init: {'theme':'base', 'themeVariables': {'background':'#ffffff', 'fontSize':'18px', 'primaryTextColor':'#000000', 'secondaryTextColor':'#000000', 'tertiaryTextColor':'#000000', 'textColor':'#000000', 'lineColor':'#000000', 'primaryBorderColor':'#000000', 'secondaryBorderColor':'#000000', 'tertiaryBorderColor':'#000000', 'clusterBkg':'#ffffff', 'clusterBorder':'#000000', 'edgeLabelBackground':'#ffffff'}}}%%
 flowchart TD
     P["SLIM individual<br/>blocks b = 1..B"] --> S["raw semantics<br/>s = sum_b block_b(x)"]
 
@@ -155,9 +155,9 @@ flowchart TD
     FLAT -.->|"operators move s,<br/>loss measures sigmoid(s)"| S
     PRESSURE -.->|"operators and loss<br/>share one space"| S
 
-    classDef old fill:#f8d7da,stroke:#c33
-    classDef new fill:#d4edda,stroke:#3a3
-    classDef core fill:#e7e7f5,stroke:#559
+    classDef old fill:#f8d7da,stroke:#c33,color:#000
+    classDef new fill:#d4edda,stroke:#3a3,color:#000
+    classDef core fill:#e7e7f5,stroke:#559,color:#000
     class SIG,RMSE,FLAT old
     class HINGE,REG,L,PRESSURE new
     class P,S,PRED core
@@ -235,7 +235,7 @@ Classes are placed at the corners of a regular simplex, and a prediction is the
 nearest corner. Two architectures are provided.
 
 ```mermaid
-%%{init: {'theme':'base', 'themeVariables': {'fontSize':'18px', 'primaryTextColor':'#000000', 'secondaryTextColor':'#000000', 'tertiaryTextColor':'#000000', 'textColor':'#000000'}}}%%
+%%{init: {'theme':'base', 'themeVariables': {'background':'#ffffff', 'fontSize':'18px', 'primaryTextColor':'#000000', 'secondaryTextColor':'#000000', 'tertiaryTextColor':'#000000', 'textColor':'#000000', 'lineColor':'#000000', 'primaryBorderColor':'#000000', 'secondaryBorderColor':'#000000', 'tertiaryBorderColor':'#000000', 'clusterBkg':'#ffffff', 'clusterBorder':'#000000', 'edgeLabelBackground':'#ffffff'}}}%%
 flowchart TD
     Y["labels y in 1..K"] --> C["simplex codes c_k<br/>K corners in R^(K-1)<br/>unit norm, sum to zero"]
 
@@ -259,9 +259,9 @@ flowchart TD
     IS --> PRED["predict: argmax_k &lt;s, c_k&gt;<br/>= nearest corner"]
     M --> PRED
 
-    classDef geom fill:#e7e7f5,stroke:#559
-    classDef ind fill:#fff3cd,stroke:#c90
-    classDef shr fill:#d4edda,stroke:#3a3
+    classDef geom fill:#e7e7f5,stroke:#559,color:#000
+    classDef ind fill:#fff3cd,stroke:#c90,color:#000
+    classDef shr fill:#d4edda,stroke:#3a3,color:#000
     class Y,C,PRED geom
     class I1,I2,IS,IL ind
     class B,A,M,JL shr
