@@ -55,8 +55,8 @@ def _class_balanced_mean(per_obs: torch.Tensor, y_true: torch.Tensor) -> torch.T
     """
     pos, neg = y_true > 0, y_true < 0
     if not pos.any() or not neg.any():
-        return per_obs.mean()
-    return 0.5 * (per_obs[pos].mean() + per_obs[neg].mean())
+        return per_obs.mean(dim=len(per_obs.shape) - 1)
+    return 0.5 * (per_obs[..., pos].mean(dim=-1) + per_obs[..., neg].mean(dim=-1))
 
 
 def margin_loss(lam: float = 0.01, balanced: bool = False):
@@ -84,7 +84,7 @@ def margin_loss(lam: float = 0.01, balanced: bool = False):
         _check_binary_labels(y_true)
         violation = torch.clamp(1.0 - y_true * y_pred, min=0.0) ** 2
         per_obs = violation + lam * y_pred ** 2
-        return _class_balanced_mean(per_obs, y_true) if balanced else per_obs.mean()
+        return _class_balanced_mean(per_obs, y_true) if balanced else per_obs.mean(dim=len(y_pred.shape) - 1)
 
     _margin_loss.__name__ = f"margin_loss(lam={lam}, balanced={balanced})"
     return _margin_loss
@@ -107,7 +107,7 @@ def logistic_loss():
     """
     def _logistic_loss(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
         _check_binary_labels(y_true)
-        return F.softplus(-y_true * y_pred).mean()
+        return F.softplus(-y_true * y_pred).mean(dim=len(y_pred.shape) - 1)
 
     _logistic_loss.__name__ = "logistic_loss"
     return _logistic_loss
@@ -131,7 +131,7 @@ def code_regression_loss():
     Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
     """
     def _code_regression_loss(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
-        return torch.mean((y_true - y_pred) ** 2)
+        return torch.mean((y_true - y_pred) ** 2, dim=len(y_pred.shape) - 1)
 
     _code_regression_loss.__name__ = "code_regression_loss"
     return _code_regression_loss
@@ -167,7 +167,7 @@ def multiclass_margin_loss(codes: torch.Tensor, y_rows: torch.Tensor, lam: float
     Returns
     -------
     Callable[[torch.Tensor], torch.Tensor]
-        ``S -> loss``, where ``S`` has shape (n, K-1).
+        ``S -> loss``, where ``S`` has shape (n, K-1) or (P, n, K-1).
     """
     n_classes = codes.shape[0]
     true_codes = codes[y_rows]                                   # (n, K-1)
@@ -184,18 +184,21 @@ def multiclass_margin_loss(codes: torch.Tensor, y_rows: torch.Tensor, lam: float
 
     def _multiclass_margin_loss(S: torch.Tensor) -> torch.Tensor:
         # m[i, k] = (K-1)/K * <s_i, c_y_i - c_k>, computed for all k at once.
-        scores = S @ codes.T                                     # (n, K)
-        true_scores = (S * true_codes).sum(dim=1, keepdim=True)   # (n, 1)
-        margins = scale * (true_scores - scores)                  # (n, K); column y_i is 0
+        scores = S @ codes.T                                     # (n, K) or (P, n, K)
+        true_scores = (S * true_codes).sum(dim=-1, keepdim=True)   # (n, 1) or (P, n, 1)
+        margins = scale * (true_scores - scores)                  # (n, K) or (P, n, K)
 
         violation = torch.clamp(1.0 - margins, min=0.0) ** 2
         # Zero out the true class, which is not a competitor.
-        violation = violation.scatter(1, y_rows.unsqueeze(1), 0.0)
+        if len(S.shape) == 3:
+            violation = violation.scatter(-1, y_rows.unsqueeze(0).unsqueeze(-1).expand(S.shape[0], -1, -1), 0.0)
+        else:
+            violation = violation.scatter(-1, y_rows.unsqueeze(-1), 0.0)
 
-        per_obs = violation.sum(dim=1) / (n_classes - 1) + lam * (S ** 2).sum(dim=1)
+        per_obs = violation.sum(dim=-1) / (n_classes - 1) + lam * (S ** 2).sum(dim=-1)
         if weights is not None:
-            return (per_obs * weights).sum()
-        return per_obs.mean()
+            return (per_obs * weights).sum(dim=-1)
+        return per_obs.mean(dim=-1)
 
     _multiclass_margin_loss.__name__ = (
         f"multiclass_margin_loss(K={n_classes}, lam={lam}, balanced={balanced})"

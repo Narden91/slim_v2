@@ -138,7 +138,8 @@ def r2_score(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
     torch.Tensor
         R² score value.
     """
-    ss_res = torch.sum(torch.square(y_true - y_pred))
+    dim = len(y_pred.shape) - 1
+    ss_res = torch.sum(torch.square(y_true - y_pred), dim=dim)
     ss_tot = torch.sum(torch.square(y_true - torch.mean(y_true)))
     r2 = 1 - (ss_res / ss_tot)
     return r2

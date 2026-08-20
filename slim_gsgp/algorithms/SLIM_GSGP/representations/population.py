@@ -24,6 +24,7 @@ Population Class for SLIM GSGP using PyTorch.
 """
 from slim_gsgp.utils.utils import _evaluate_slim_individual
 from joblib import Parallel, delayed
+import torch
 
 class Population:
     def __init__(self, population):
@@ -153,11 +154,24 @@ class Population:
         -------
         None
         """
-        # Evaluates individuals' fitnesses
-        self.fit = Parallel(n_jobs=n_jobs)(
-            delayed(_evaluate_slim_individual)(individual, ffunction=ffunction, y=y, operator=operator
-            ) for individual in self.population)
+        op = torch.sum if operator == "sum" else torch.prod
 
-        # Assigning individuals' fitness as an attribute
-        [self.population[i].__setattr__('fitness', f) for i, f in enumerate(self.fit)]
+        # Extract semantics for all individuals and stack into a (P, N) tensor
+        preds = torch.stack([
+            torch.clamp(
+                ind.get_train_semantics_collapsed(op, dim=0),
+                -1000000000000.0,
+                1000000000000.0
+            )
+            for ind in self.population
+        ])
+        
+        # Evaluate all individuals at once using PyTorch's native C-backend broadcasting
+        fits = ffunction(y, preds)
+        
+        self.fit = fits.tolist()
+
+        # Assign individuals' fitness as an attribute
+        for ind, f in zip(self.population, self.fit):
+            ind.fitness = f
 
