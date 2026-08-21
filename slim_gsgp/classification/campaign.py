@@ -572,6 +572,31 @@ def analyse(results: pd.DataFrame, question: str) -> pd.DataFrame:
     return paired_comparison(results, metric, reference)
 
 
+def _checkpoint_path(result_path: Path) -> Path:
+    return result_path.with_suffix(".checkpoint.csv")
+
+
+def _resume_results(result_path: Path, resume: bool) -> pd.DataFrame:
+    if not resume:
+        return pd.DataFrame()
+    checkpoint_path = _checkpoint_path(result_path)
+    source_path = checkpoint_path if checkpoint_path.exists() else result_path
+    return pd.read_csv(source_path) if source_path.exists() else pd.DataFrame()
+
+
+def _save_checkpoint(result_path: Path, existing: pd.DataFrame,
+                     completed: list[dict]) -> Path:
+    checkpoint_path = _checkpoint_path(result_path)
+    pd.concat([existing, pd.DataFrame(completed)], ignore_index=True).to_csv(
+        checkpoint_path, index=False,
+    )
+    try:
+        checkpoint_path.replace(result_path)
+    except PermissionError:
+        return checkpoint_path
+    return result_path
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="python -m slim_gsgp.classification.campaign",
@@ -597,7 +622,7 @@ def main(argv=None):
     parser.add_argument("--calibration", default="none",
                         choices=["none", "platt", "isotonic", "temperature"])
     parser.add_argument("--resume", action="store_true",
-                        help="Skip successful rows already checkpointed in the output CSV.")
+                        help="Skip successful rows from the output CSV or its checkpoint.")
     args = parser.parse_args(argv)
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -607,7 +632,7 @@ def main(argv=None):
         print(f"== {question} ==", flush=True)
         started = time.time()
         raw_path = args.out / f"{question}.csv"
-        existing = pd.read_csv(raw_path) if args.resume and raw_path.exists() else pd.DataFrame()
+        existing = _resume_results(raw_path, args.resume)
         skip_keys = set()
         if not existing.empty:
             expected_hash = _config_hash(
@@ -620,12 +645,16 @@ def main(argv=None):
             skip_keys = set(zip(good["question"], good["dataset"], good["method"], good["seed"]))
 
         completed = []
+        output_path = raw_path
+        reported_lock = False
 
         def checkpoint(row):
+            nonlocal output_path, reported_lock
             completed.append(row)
-            checkpoint_path = raw_path.with_suffix(".checkpoint.csv")
-            pd.concat([existing, pd.DataFrame(completed)], ignore_index=True).to_csv(checkpoint_path, index=False)
-            checkpoint_path.replace(raw_path)
+            output_path = _save_checkpoint(raw_path, existing, completed)
+            if output_path != raw_path and not reported_lock:
+                print(f"  {raw_path} is locked; continuing in {output_path}.", flush=True)
+                reported_lock = True
 
         results = run_question(question, datasets=args.datasets, seeds=args.seeds,
                                pop_size=args.pop_size, n_iter=args.n_iter,
@@ -642,7 +671,7 @@ def main(argv=None):
         except Exception as error:
             print(f"  analysis skipped: {type(error).__name__}: {error}")
 
-        print(f"  {len(results)} runs in {time.time() - started:.1f}s -> {raw_path}\n",
+        print(f"  {len(results)} runs in {time.time() - started:.1f}s -> {output_path}\n",
               flush=True)
 
 

@@ -356,6 +356,28 @@ def test_q5_has_one_adaptive_run_per_dataset_seed():
     assert len(results) == 12  # five random steps plus one adaptive run, twice
 
 
+def test_checkpoint_survives_a_locked_result_csv(tmp_path, monkeypatch):
+    import pandas as pd
+    from slim_gsgp.classification import campaign
+
+    result_path = tmp_path / "q1.csv"
+    original_replace = type(result_path).replace
+
+    def locked_replace(self, target):
+        if self == campaign._checkpoint_path(result_path) and target == result_path:
+            raise PermissionError("result file is open")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(type(result_path), "replace", locked_replace)
+    output_path = campaign._save_checkpoint(
+        result_path, pd.DataFrame(), [{"dataset": "d", "seed": 0}],
+    )
+
+    assert output_path == campaign._checkpoint_path(result_path)
+    resumed = campaign._resume_results(result_path, resume=True)
+    assert resumed.to_dict("records") == [{"dataset": "d", "seed": 0}]
+
+
 def test_q4_separates_architecture_from_objective():
     from slim_gsgp.classification import campaign
 

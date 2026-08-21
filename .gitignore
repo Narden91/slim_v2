@@ -12,3 +12,4 @@ slim_gsgp/log/slim_postgrid_resid_build_sale_price-size.csv_test_ignore
 *.log   
 .github/skills/*
 MS_*
+results/*
