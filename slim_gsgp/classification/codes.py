@@ -138,3 +138,38 @@ def simplex_codes(n_classes: int) -> torch.Tensor:
     codes = q[:, : n_classes - 1]
     codes = codes / codes.norm(dim=1, keepdim=True)
     return codes
+
+
+def prior_weighted_codes(class_counts: torch.Tensor, steps: int = 200,
+                         lr: float = 0.05) -> torch.Tensor:
+    """Learn an exploratory, prior-weighted alternative to fixed simplex codes.
+
+    Rare-class pairs receive larger angular-separation weight. This is a
+    constrained heuristic, not a theorem about optimal class geometry; callers
+    must fit it from training labels only and compare it against ``simplex_codes``.
+    """
+    counts = torch.as_tensor(class_counts, dtype=torch.float32)
+    n_classes = counts.numel()
+    if n_classes < 2 or (counts <= 0).any():
+        raise ValueError("class_counts must contain one positive count per class")
+    codes = simplex_codes(n_classes).clone().requires_grad_(True)
+    inverse = 1.0 / counts
+    weights = inverse[:, None] + inverse[None, :]
+    mask = ~torch.eye(n_classes, dtype=torch.bool)
+    optimizer = torch.optim.Adam([codes], lr=lr)
+    for _ in range(steps):
+        optimizer.zero_grad()
+        gram = codes @ codes.T
+        # Low weighted cosine means stronger separation where data are rare.
+        loss = (weights[mask] * gram[mask]).mean()
+        loss.backward()
+        optimizer.step()
+        with torch.no_grad():
+            codes -= codes.mean(dim=0, keepdim=True)
+            codes /= codes.norm(dim=1, keepdim=True).clamp_min(1e-8)
+    # Alternating projection restores both constraints after the final Adam step.
+    with torch.no_grad():
+        for _ in range(100):
+            codes -= codes.mean(dim=0, keepdim=True)
+            codes /= codes.norm(dim=1, keepdim=True).clamp_min(1e-8)
+    return codes.detach()

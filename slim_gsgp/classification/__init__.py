@@ -26,8 +26,8 @@ Two families of technique are available, chosen via
 ``slim_gsgp.main_slim.slim(fitness_function=...)``:
 
 - **Sigmoid + RMSE** (Bakurov et al. 2022): squashes raw outputs through a
-  sigmoid before comparing to {0,1} labels. Kept for backward compatibility;
-  see ``slim_gsgp.evaluators.fitness_functions.sigmoid_rmse``.
+  sigmoid before comparing to {0,1} labels. It is retained only as the Q1
+  experimental comparator; see ``slim_gsgp.evaluators.fitness_functions.sigmoid_rmse``.
 - **MS-SLIM / margin loss** (this module): evaluates classification loss
   directly on raw semantics, with a squared-hinge margin term. See
   ``MS_SLIM_formulation.md`` for the full derivation.
@@ -50,10 +50,11 @@ Example
 """
 
 from slim_gsgp.classification.codes import (
-    encode_binary, encode_zero_one, decode_binary, simplex_codes,
+    encode_binary, encode_zero_one, decode_binary, simplex_codes, prior_weighted_codes,
 )
 from slim_gsgp.classification.losses import (
     margin_loss, logistic_loss, code_regression_loss, multiclass_margin_loss,
+    multiclass_code_regression_loss, multiclass_cross_entropy_loss,
 )
 from slim_gsgp.classification.strategies import ClassificationStrategy, STRATEGIES, get_strategy
 from slim_gsgp.classification.adaptive_inflate import optimal_alpha, adaptive_inflate
@@ -77,6 +78,7 @@ _LAZY = {
     "analyse": "slim_gsgp.classification.campaign",
     "DATASETS": "slim_gsgp.classification.benchmarks",
     "load_dataset": "slim_gsgp.classification.benchmarks",
+    "load_dataset_split": "slim_gsgp.classification.benchmarks",
     "describe_datasets": "slim_gsgp.classification.benchmarks",
 }
 
@@ -99,12 +101,15 @@ __all__ = [
     "logistic_loss",
     "code_regression_loss",
     "multiclass_margin_loss",
+    "multiclass_code_regression_loss",
+    "multiclass_cross_entropy_loss",
     "ClassificationStrategy",
     "STRATEGIES",
     "get_strategy",
     "optimal_alpha",
     "adaptive_inflate",
     "simplex_codes",
+    "prior_weighted_codes",
     "MulticlassResult",
     "fit_multiclass",
     "predict_multiclass",
@@ -116,6 +121,7 @@ __all__ = [
     "analyse",
     "DATASETS",
     "load_dataset",
+    "load_dataset_split",
     "describe_datasets",
     "sigmoid_rmse",
     "binary_sign_transform",

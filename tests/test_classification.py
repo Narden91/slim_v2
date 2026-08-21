@@ -263,7 +263,7 @@ def test_fit_coefficients_reaches_convex_optimum():
     loss = multiclass_margin_loss(codes, y_rows, lam=0.05)
     R = torch.randn(n_blocks, n)
 
-    A = fit_coefficients(R, loss, n_classes, iters=200)
+    A = fit_coefficients(R, loss, n_classes, max_iter=200)
     fitted = float(loss(R.T @ A))
 
     refined = A.clone().requires_grad_(True)
@@ -307,30 +307,6 @@ def test_fit_shared_blocks_learns_a_separable_problem():
     assert result.coefficients.shape == (result.individual.size, 2)
 
 
-def test_stratified_split_keeps_every_class_in_both_parts():
-    """Unstratified splits can drop a rare class entirely, voiding AUPRC and MCC."""
-    from slim_gsgp.classification.campaign import stratified_split
-
-    y = torch.cat([torch.zeros(200), torch.ones(6)])       # 3% minority
-    for seed in range(5):
-        train_idx, test_idx = stratified_split(y, p_test=0.2, seed=seed)
-        assert y[test_idx].sum() > 0, "minority class missing from test split"
-        assert y[train_idx].sum() > 0, "minority class missing from train split"
-        assert len(train_idx) + len(test_idx) == len(y)
-        assert set(train_idx.tolist()).isdisjoint(test_idx.tolist())
-
-
-def test_stratified_split_is_seed_reproducible_and_seed_varying():
-    from slim_gsgp.classification.campaign import stratified_split
-
-    y = torch.cat([torch.zeros(80), torch.ones(20)])
-    first, _ = stratified_split(y, 0.25, seed=0)
-    again, _ = stratified_split(y, 0.25, seed=0)
-    other, _ = stratified_split(y, 0.25, seed=1)
-    assert torch.equal(first, again)
-    assert not torch.equal(first, other)
-
-
 def test_paired_comparison_detects_effect_and_respects_null():
     """A known constant improvement must be significant; noise must not be."""
     import numpy as np
@@ -362,6 +338,92 @@ def test_evaluate_predictions_reports_macro_f1_for_multiclass():
     assert "f1" in binary and "macro_f1" not in binary
     assert "macro_f1" in multi and "f1" not in multi
     assert multi["macro_f1"] == 1.0
+
+
+def test_q5_has_one_adaptive_run_per_dataset_seed():
+    from slim_gsgp.classification import campaign
+
+    original = campaign.run_binary_config
+    campaign.run_binary_config = lambda **kwargs: {
+        "dataset": kwargs["dataset"], "seed": kwargs["seed"], "accuracy": 0.5,
+    }
+    try:
+        results = campaign.run_question("q5", datasets=["breast_cancer"], seeds=2,
+                                        pop_size=2, n_iter=1, progress=False)
+    finally:
+        campaign.run_binary_config = original
+    assert (results["method"] == "adaptive").sum() == 2
+    assert len(results) == 12  # five random steps plus one adaptive run, twice
+
+
+def test_q4_separates_architecture_from_objective():
+    from slim_gsgp.classification import campaign
+
+    original = campaign.run_multiclass_config
+    calls = []
+
+    def fake(**kwargs):
+        calls.append((kwargs["architecture"], kwargs["objective"]))
+        return {"dataset": kwargs["dataset"], "seed": kwargs["seed"], "accuracy": 0.5}
+
+    campaign.run_multiclass_config = fake
+    try:
+        campaign.run_question("q4", datasets=["waveform"], seeds=1,
+                              pop_size=2, n_iter=1, progress=False)
+    finally:
+        campaign.run_multiclass_config = original
+    assert calls == [
+        ("independent", "code_regression"),
+        ("shared_blocks", "code_regression"),
+        ("shared_blocks", "margin"),
+    ]
+
+
+def test_binary_calibration_uses_validation_labels_only():
+    from slim_gsgp.classification.calibration import binary_probabilities
+
+    calibrated = binary_probabilities(
+        [-3.0, -1.0, 1.0, 3.0], [0, 0, 1, 1], [-2.0, 2.0], method="platt",
+    )
+    assert calibrated.probabilities.shape == (2,)
+    assert calibrated.probabilities[0] < calibrated.probabilities[1]
+
+
+def test_split_preprocessing_uses_training_median_and_columns():
+    import pandas as pd
+    from slim_gsgp.classification.benchmarks import _prepared_features
+
+    train = pd.DataFrame({"x": [1.0, float("nan")], "kind": ["a", "b"]})
+    test = pd.DataFrame({"x": [100.0, float("nan")], "kind": ["b", "unseen"]})
+    _, columns, medians = _prepared_features(train)
+    transformed, _, _ = _prepared_features(test, columns, medians)
+    assert transformed[1, list(columns).index("x")] == 1.0
+    assert "kind_unseen" not in columns
+
+
+def test_prior_weighted_codes_are_centered_and_unit_norm():
+    from slim_gsgp.classification.codes import prior_weighted_codes
+
+    codes = prior_weighted_codes(torch.tensor([100, 20, 5]), steps=20)
+    assert codes.shape == (3, 2)
+    assert torch.allclose(codes.sum(dim=0), torch.zeros(2), atol=1e-5)
+    assert torch.allclose(codes.norm(dim=1), torch.ones(3), atol=1e-5)
+
+
+def test_parsimony_tournament_prefers_smaller_near_tie(monkeypatch):
+    import slim_gsgp.selection.selection_algorithms as selection
+
+    class Individual:
+        def __init__(self, fitness, nodes_count):
+            self.fitness = fitness
+            self.nodes_count = nodes_count
+
+    class Population:
+        population = [Individual(1.0, 20), Individual(1.005, 3)]
+
+    monkeypatch.setattr(selection.random, "choices", lambda population, k: population)
+    selector = selection.tournament_selection_min(2, parsimony_tolerance=0.01)
+    assert selector(Population()).nodes_count == 3
 
 
 SLIM_VERSIONS = ("SLIM+ABS", "SLIM*ABS", "SLIM+SIG1",

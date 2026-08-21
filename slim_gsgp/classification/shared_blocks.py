@@ -53,26 +53,27 @@ from slim_gsgp.algorithms.SLIM_GSGP.operators.mutators import (
     deflate_mutation, inflate_mutation,
 )
 from slim_gsgp.algorithms.SLIM_GSGP.representations.individual import Individual
-from slim_gsgp.classification.codes import simplex_codes
-from slim_gsgp.classification.losses import multiclass_margin_loss
+from slim_gsgp.classification.codes import prior_weighted_codes, simplex_codes
+from slim_gsgp.classification.losses import (
+    multiclass_code_regression_loss,
+    multiclass_cross_entropy_loss,
+    multiclass_margin_loss,
+)
 from slim_gsgp.config.slim_config import FUNCTIONS, CONSTANTS, initializer_options
 from slim_gsgp.utils.utils import check_slim_version, get_terminals
 
 __all__ = ["fit_coefficients", "SharedBlockResult", "fit_shared_blocks"]
 
 
-def fit_coefficients(R: torch.Tensor, loss, n_classes: int, iters: int = 60,
+def fit_coefficients(R: torch.Tensor, loss, n_classes: int, max_iter: int = 60,
                      lr: float = 0.5) -> torch.Tensor:
     """
     Fit the block coefficient matrix ``A`` for fixed block semantics ``R``.
 
-    ``S = R^T A`` is linear in ``A`` and the joint margin loss is strictly
-    convex in ``S``, so the composed problem is convex in ``A`` and gradient
-    descent reaches its global optimum (formulation section 11). Uses Adam
-    rather than a hand-rolled active-set solve: the multiclass hinge has
-    ``n * (K-1)`` breakpoints instead of the ``n`` of the binary case, which
-    makes an exact sweep considerably more involved for no accuracy gain on a
-    convex objective.
+    ``S = R^T A`` is linear in ``A``. The supplied objectives are convex in
+    ``S``, so the composed problem is convex in ``A``. LBFGS is the default
+    numerical solver; convergence remains an empirical tolerance check rather
+    than a claim that a fixed number of steps is exact.
 
     Parameters
     ----------
@@ -82,10 +83,10 @@ def fit_coefficients(R: torch.Tensor, loss, n_classes: int, iters: int = 60,
         A ``multiclass_margin_loss`` closure taking ``S`` of shape (n, K-1).
     n_classes : int
         Number of classes K.
-    iters : int, optional
-        Gradient steps (default 60).
+    max_iter : int, optional
+        Maximum LBFGS iterations (default 60).
     lr : float, optional
-        Adam learning rate (default 0.5).
+        LBFGS step size (default 0.5).
 
     Returns
     -------
@@ -93,12 +94,18 @@ def fit_coefficients(R: torch.Tensor, loss, n_classes: int, iters: int = 60,
         Fitted coefficients ``A``, shape (B, K-1).
     """
     Rt = R.T.detach()                                    # (n, B)
-    A = torch.zeros(R.shape[0], n_classes - 1, requires_grad=True)
-    optimizer = torch.optim.Adam([A], lr=lr)
-    for _ in range(iters):
+    A = torch.zeros(R.shape[0], n_classes - 1, device=R.device, dtype=R.dtype,
+                    requires_grad=True)
+    optimizer = torch.optim.LBFGS([A], lr=lr, max_iter=max_iter,
+                                  tolerance_grad=1e-7, tolerance_change=1e-9)
+
+    def closure():
         optimizer.zero_grad()
-        loss(Rt @ A).backward()
-        optimizer.step()
+        value = loss(Rt @ A)
+        value.backward()
+        return value
+
+    optimizer.step(closure)
     return A.detach()
 
 
@@ -192,6 +199,8 @@ def fit_shared_blocks(
     lam: float = 0.01,
     balanced: bool = False,
     coefficient_iters: int = 60,
+    objective: str = "margin",
+    geometry: str = "simplex",
     tournament_size: int = 2,
     seed: int = 0,
     verbose: int = 0,
@@ -220,7 +229,12 @@ def fit_shared_blocks(
     balanced : bool, optional
         Use the class-balanced empirical risk (formulation section 8).
     coefficient_iters : int, optional
-        Gradient steps used to fit ``A`` per evaluation (default 60).
+        Maximum optimizer iterations used to fit ``A`` per evaluation.
+    objective : {"margin", "code_regression", "cross_entropy"}, optional
+        Shared-block objective. ``code_regression`` isolates representation;
+        ``cross_entropy`` is the raw-score multiclass baseline.
+    geometry : {"simplex", "prior_weighted"}, optional
+        Fixed simplex or exploratory class-prior-weighted code geometry.
     tournament_size : int, optional
         Tournament selection size (default 2).
     seed : int, optional
@@ -251,10 +265,25 @@ def fit_shared_blocks(
 
     classes = torch.unique(y_train)
     n_classes = len(classes)
-    codes = simplex_codes(n_classes)
+    if geometry == "simplex":
+        codes = simplex_codes(n_classes)
+    elif geometry == "prior_weighted":
+        y_counts = torch.bincount(torch.searchsorted(classes, y_train), minlength=n_classes)
+        codes = prior_weighted_codes(y_counts)
+    else:
+        raise ValueError("geometry must be 'simplex' or 'prior_weighted'")
+    codes = codes.to(device=X_train.device, dtype=X_train.dtype)
     class_to_row = {float(c): i for i, c in enumerate(classes)}
-    y_rows = torch.tensor([class_to_row[float(c)] for c in y_train])
-    loss = multiclass_margin_loss(codes, y_rows, lam=lam, balanced=balanced)
+    y_rows = torch.tensor([class_to_row[float(c)] for c in y_train], device=X_train.device)
+    losses = {
+        "margin": lambda: multiclass_margin_loss(codes, y_rows, lam=lam, balanced=balanced),
+        "code_regression": lambda: multiclass_code_regression_loss(codes, y_rows, balanced=balanced),
+        "cross_entropy": lambda: multiclass_cross_entropy_loss(codes, y_rows, balanced=balanced),
+    }
+    try:
+        loss = losses[objective]()
+    except KeyError as error:
+        raise ValueError("objective must be 'margin', 'code_regression', or 'cross_entropy'") from error
 
     operator, sig, two_trees = check_slim_version(slim_version=slim_version)
 
@@ -269,9 +298,9 @@ def fit_shared_blocks(
     )
 
     def evaluate(individual):
-        """Fitness = joint loss at the individual's optimal coefficients."""
+        """Fitness is the fitted coefficient objective for this block set."""
         A = fit_coefficients(individual.train_semantics, loss, n_classes,
-                             iters=coefficient_iters)
+                             max_iter=coefficient_iters)
         with torch.no_grad():
             fitness = float(loss(individual.train_semantics.T @ A))
         individual.coefficients = A
@@ -321,4 +350,7 @@ def fit_shared_blocks(
             print(f"gen {generation:3d} | loss {elite.fitness:.6f} | "
                   f"blocks {elite.size} | {time.time() - start:.2f}s")
 
-    return SharedBlockResult(elite, elite.coefficients, codes, classes, elite.fitness)
+    result = SharedBlockResult(elite, elite.coefficients, codes, classes, elite.fitness)
+    result.objective = objective
+    result.geometry = geometry
+    return result

@@ -88,7 +88,9 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
          sigmoid_scaling_factor: float = 1.0,
          lam: float = 0.01,
          balanced: bool = False,
-         use_adaptive_inflate: bool = False):
+         use_adaptive_inflate: bool = False,
+         adaptive_candidate_batch: int = 1,
+         parsimony_tolerance: float = 0.0):
 
     """
     Main function to execute the SLIM GSGP algorithm on specified datasets.
@@ -165,6 +167,13 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
         If True and ``fitness_function="margin"``, replace the random inflate mutation
         step with the exact optimal step for that loss (default is False). See
         ``slim_gsgp.classification.adaptive_inflate``.
+    adaptive_candidate_batch : int, optional
+        Number of candidate blocks scored by exact adaptive line search before
+        retaining the best one. Valid only with ``use_adaptive_inflate``.
+    parsimony_tolerance : float, optional
+        Relative fitness tolerance within a tournament. Candidates within the
+        tolerance of the best fitness are selected by smallest node count.
+        This is direct structural pressure, distinct from semantic L2.
 
     Returns
     -------
@@ -308,7 +317,8 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
             )
         from slim_gsgp.classification.adaptive_inflate import adaptive_inflate as _adaptive_inflate
         parameters["inflate_mutator"] = _adaptive_inflate(
-            parameters["inflate_mutator"], y_train=y_train, lam=lam, operator=op, balanced=balanced
+            parameters["inflate_mutator"], y_train=y_train, lam=lam, operator=op,
+            balanced=balanced, candidate_batch=adaptive_candidate_batch,
         )
     parameters["initializer"] = initializer_options[initializer]
     parameters["ms"] = ms
@@ -318,7 +328,9 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
     parameters["seed"] = seed
 
     if minimization:
-        parameters["selector"] = tournament_selection_min(tournament_size)
+        parameters["selector"] = tournament_selection_min(
+            tournament_size, parsimony_tolerance=parsimony_tolerance,
+        )
         parameters["find_elit_func"] = get_best_min
     else:
         parameters["selector"] = tournament_selection_max(tournament_size)

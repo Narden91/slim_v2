@@ -204,3 +204,47 @@ def multiclass_margin_loss(codes: torch.Tensor, y_rows: torch.Tensor, lam: float
         f"multiclass_margin_loss(K={n_classes}, lam={lam}, balanced={balanced})"
     )
     return _multiclass_margin_loss
+
+
+def multiclass_code_regression_loss(codes: torch.Tensor, y_rows: torch.Tensor,
+                                    balanced: bool = False):
+    """Squared error to simplex codes for a complete shared-block baseline."""
+    targets = codes[y_rows]
+    n_classes = codes.shape[0]
+    if balanced:
+        counts = torch.bincount(y_rows, minlength=n_classes).clamp(min=1).float()
+        weights = (1.0 / counts)[y_rows]
+        weights = weights / weights.sum()
+    else:
+        weights = None
+
+    def _loss(S: torch.Tensor) -> torch.Tensor:
+        per_obs = (S - targets).square().sum(dim=-1)
+        if weights is not None:
+            return (per_obs * weights).sum(dim=-1)
+        return per_obs.mean(dim=-1)
+
+    _loss.__name__ = f"multiclass_code_regression_loss(K={n_classes}, balanced={balanced})"
+    return _loss
+
+
+def multiclass_cross_entropy_loss(codes: torch.Tensor, y_rows: torch.Tensor,
+                                  balanced: bool = False):
+    """Raw-score multiclass cross-entropy baseline on simplex class scores."""
+    n_classes = codes.shape[0]
+    if balanced:
+        counts = torch.bincount(y_rows, minlength=n_classes).clamp(min=1).float()
+        weights = (1.0 / counts)[y_rows]
+        weights = weights / weights.sum()
+    else:
+        weights = None
+
+    def _loss(S: torch.Tensor) -> torch.Tensor:
+        scores = S @ codes.T
+        per_obs = F.cross_entropy(scores, y_rows, reduction="none")
+        if weights is not None:
+            return (per_obs * weights).sum(dim=-1)
+        return per_obs.mean(dim=-1)
+
+    _loss.__name__ = f"multiclass_cross_entropy_loss(K={n_classes}, balanced={balanced})"
+    return _loss

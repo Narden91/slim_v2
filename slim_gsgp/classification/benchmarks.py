@@ -41,7 +41,7 @@ import numpy as np
 import torch
 
 __all__ = ["DatasetSpec", "BINARY_DATASETS", "MULTICLASS_DATASETS", "DATASETS",
-           "load_dataset", "describe_datasets"]
+           "load_dataset", "load_dataset_split", "describe_datasets"]
 
 
 @dataclass(frozen=True)
@@ -81,25 +81,13 @@ def _encode_targets(target):
 
 
 def _openml(data_id: int):
-    """Fetch an OpenML dataset by numeric id, as dense float32 / int64."""
+    """Fetch an OpenML dataset by numeric id without split-dependent transforms."""
     def _load():
         from sklearn.datasets import fetch_openml
 
         bunch = fetch_openml(data_id=data_id, as_frame=True, parser="auto")
-        frame_X = bunch.data
-        # One-hot any categorical columns; SLIM terminals are numeric only.
-        categorical = frame_X.select_dtypes(include=["category", "object"]).columns
-        if len(categorical):
-            import pandas as pd
-            frame_X = pd.get_dummies(frame_X, columns=list(categorical), dummy_na=True)
-        X = frame_X.astype("float32").to_numpy()
-        # Median-impute; SLIM has no missing-value handling of its own.
-        if np.isnan(X).any():
-            medians = np.nanmedian(X, axis=0)
-            medians = np.where(np.isnan(medians), 0.0, medians)
-            X = np.where(np.isnan(X), medians, X)
         codes, _ = _encode_targets(bunch.target)
-        return X, codes
+        return bunch.data.copy(), codes
 
     return _load
 
@@ -225,6 +213,43 @@ MULTICLASS_DATASETS = (
 DATASETS = {spec.name: spec for spec in BINARY_DATASETS + MULTICLASS_DATASETS}
 
 
+def _prepared_features(X, reference_columns=None, medians=None):
+    """One-hot and median-impute features, fitting statistics only when requested."""
+    import pandas as pd
+
+    if isinstance(X, pd.DataFrame):
+        categorical = X.select_dtypes(include=["category", "object", "bool"]).columns
+        frame = pd.get_dummies(X, columns=list(categorical), dummy_na=True, dtype="float32")
+        if reference_columns is not None:
+            frame = frame.reindex(columns=reference_columns, fill_value=0.0)
+        frame = frame.astype("float32")
+        values = frame.to_numpy()
+        columns = frame.columns
+    else:
+        values = np.asarray(X, dtype="float32")
+        columns = None
+    if medians is None:
+        medians = np.nanmedian(values, axis=0)
+        medians = np.where(np.isnan(medians), 0.0, medians)
+    values = np.where(np.isnan(values), medians, values).astype("float32")
+    return values, columns, medians
+
+
+def _raw_dataset(name: str):
+    try:
+        spec = DATASETS[name]
+    except KeyError:
+        raise KeyError(f"Unknown dataset {name!r}. Available: {sorted(DATASETS)}")
+    try:
+        return spec.loader()
+    except Exception as error:
+        raise RuntimeError(
+            f"Could not load benchmark {name!r}: {error}. OpenML datasets need "
+            "network access on first use; afterwards they are cached under "
+            "~/scikit_learn_data."
+        ) from error
+
+
 def load_dataset(name: str):
     """
     Load a registered benchmark as ``(X, y)`` torch tensors.
@@ -239,21 +264,40 @@ def load_dataset(name: str):
     (torch.Tensor, torch.Tensor)
         ``X`` float32 of shape (n, d); ``y`` float32 class codes in 0..K-1.
     """
-    try:
-        spec = DATASETS[name]
-    except KeyError:
-        raise KeyError(f"Unknown dataset {name!r}. Available: {sorted(DATASETS)}")
-
-    try:
-        X, y = spec.loader()
-    except Exception as error:                      # network / OpenML failure
-        raise RuntimeError(
-            f"Could not load benchmark {name!r}: {error}. OpenML datasets need "
-            "network access on first use; afterwards they are cached under "
-            "~/scikit_learn_data."
-        ) from error
+    X, y = _raw_dataset(name)
+    X, _, _ = _prepared_features(X)
 
     return torch.as_tensor(X, dtype=torch.float32), torch.as_tensor(y, dtype=torch.float32)
+
+
+def load_dataset_split(name: str, seed: int, p_test: float = 0.2, p_val: float = 0.2):
+    """Return stratified train/validation/test tensors with train-only preprocessing."""
+    X, y = _raw_dataset(name)
+    y = np.asarray(y)
+    rng = np.random.default_rng(seed)
+
+    def stratified_indices(indices, proportion):
+        train, held_out = [], []
+        for label in np.unique(y[indices]):
+            members = indices[y[indices] == label].copy()
+            rng.shuffle(members)
+            n_holdout = max(1, int(round(len(members) * proportion))) if len(members) > 1 else 0
+            held_out.extend(members[:n_holdout])
+            train.extend(members[n_holdout:])
+        return np.asarray(train, dtype=int), np.asarray(held_out, dtype=int)
+
+    train_idx, test_idx = stratified_indices(np.arange(len(y)), p_test)
+    train_idx, val_idx = stratified_indices(train_idx, p_val / (1.0 - p_test))
+    if hasattr(X, "iloc"):
+        X_train_raw, X_val_raw, X_test_raw = X.iloc[train_idx], X.iloc[val_idx], X.iloc[test_idx]
+    else:
+        X_train_raw, X_val_raw, X_test_raw = X[train_idx], X[val_idx], X[test_idx]
+    X_train, columns, medians = _prepared_features(X_train_raw)
+    X_val, _, _ = _prepared_features(X_val_raw, columns, medians)
+    X_test, _, _ = _prepared_features(X_test_raw, columns, medians)
+    return tuple(torch.as_tensor(value, dtype=torch.float32) for value in (
+        X_train, y[train_idx], X_val, y[val_idx], X_test, y[test_idx],
+    ))
 
 
 def describe_datasets(names=None) -> list:

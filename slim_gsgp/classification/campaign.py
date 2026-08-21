@@ -37,7 +37,9 @@ paired comparison tables the manuscript reports.
 """
 
 import argparse
+import hashlib
 import itertools
+import json
 import time
 from pathlib import Path
 
@@ -50,13 +52,17 @@ from sklearn.metrics import (
 )
 
 from slim_gsgp.classification.benchmarks import (
-    BINARY_DATASETS, MULTICLASS_DATASETS, load_dataset,
+    BINARY_DATASETS, MULTICLASS_DATASETS, load_dataset_split,
 )
 from slim_gsgp.classification.codes import simplex_codes
 from slim_gsgp.classification.strategies import get_strategy
+from slim_gsgp.classification.calibration import (
+    binary_probabilities,
+    multiclass_temperature_probabilities,
+)
 
 __all__ = [
-    "stratified_split", "evaluate_predictions", "run_binary_config",
+    "evaluate_predictions", "run_binary_config",
     "run_multiclass_config", "run_question", "paired_comparison", "analyse",
 ]
 
@@ -68,53 +74,6 @@ DEFAULT_N_ITER = 100
 DEFAULT_SEEDS = 20
 LAMBDA_GRID = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
 MUTATION_STEPS = (0.1, 0.3, 0.5, 1.0, 2.0)
-BINARY_STRATEGIES = ("margin", "logistic", "code_regression", "sigmoid_rmse")
-
-
-def stratified_split(y: torch.Tensor, p_test: float, seed: int):
-    """
-    Stratified index split preserving each class's share.
-
-    ``slim_gsgp.utils.utils.train_test_split`` shuffles without stratifying,
-    which on the severely imbalanced benchmarks (mammography at 2.3% positive,
-    yeast whose smallest class holds 5 rows) can leave a split with almost no
-    minority examples -- making AUPRC and MCC meaningless. Every campaign split
-    is therefore stratified.
-
-    Parameters
-    ----------
-    y : torch.Tensor
-        Class labels.
-    p_test : float
-        Proportion held out.
-    seed : int
-        Seed for the permutation.
-
-    Returns
-    -------
-    (torch.Tensor, torch.Tensor)
-        Train and test index tensors.
-    """
-    generator = torch.Generator().manual_seed(seed)
-    train_parts, test_parts = [], []
-    for value in torch.unique(y):
-        idx = torch.nonzero(y == value, as_tuple=True)[0]
-        idx = idx[torch.randperm(len(idx), generator=generator)]
-        n_test = max(1, int(round(len(idx) * p_test))) if len(idx) > 1 else 0
-        test_parts.append(idx[:n_test])
-        train_parts.append(idx[n_test:])
-    return torch.cat(train_parts), torch.cat(test_parts)
-
-
-def _three_way_split(X, y, seed, p_test=0.2, p_val=0.2):
-    """Stratified train/validation/test split, reproducible from ``seed`` alone."""
-    train_idx, test_idx = stratified_split(y, p_test, seed)
-    inner_train, val_rel = stratified_split(y[train_idx], p_val / (1.0 - p_test), seed)
-    val_idx = train_idx[val_rel]
-    train_idx = train_idx[inner_train]
-    return (X[train_idx], y[train_idx], X[val_idx], y[val_idx], X[test_idx], y[test_idx])
-
-
 def evaluate_predictions(y_true, y_pred, scores=None, n_classes=2) -> dict:
     """
     Metrics required by the research plan's evaluation section.
@@ -176,14 +135,53 @@ def _margin_diagnostics(S: torch.Tensor, y_rows: torch.Tensor, codes: torch.Tens
     }
 
 
+def _expected_calibration_error(outcomes, probabilities, n_bins=10):
+    outcomes = np.asarray(outcomes, dtype=float)
+    probabilities = np.asarray(probabilities, dtype=float)
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    error = 0.0
+    for lower, upper in zip(bins[:-1], bins[1:]):
+        mask = (probabilities >= lower) & (probabilities < upper if upper < 1 else probabilities <= upper)
+        if mask.any():
+            error += mask.mean() * abs(outcomes[mask].mean() - probabilities[mask].mean())
+    return float(error)
+
+
+def _calibration_metrics(y_true, probabilities, n_classes):
+    from sklearn.metrics import brier_score_loss, log_loss
+
+    y_true = np.asarray(y_true)
+    if n_classes == 2:
+        positive = y_true == y_true.max()
+        return {
+            "calibration_log_loss": log_loss(positive, probabilities, labels=[False, True]),
+            "brier_score": brier_score_loss(positive, probabilities),
+            "ece_10": _expected_calibration_error(positive, probabilities),
+        }
+    labels = np.arange(n_classes)
+    one_hot = np.eye(n_classes)[y_true.astype(int)]
+    classwise = [
+        _expected_calibration_error(y_true == class_id, probabilities[:, class_id])
+        for class_id in labels
+    ]
+    confidence = probabilities.max(axis=1)
+    correct = probabilities.argmax(axis=1) == y_true
+    return {
+        "calibration_log_loss": log_loss(y_true, probabilities, labels=labels),
+        "brier_score": float(np.mean(np.sum((one_hot - probabilities) ** 2, axis=1))),
+        "ece_10": _expected_calibration_error(correct, confidence),
+        "classwise_ece_10": float(np.mean(classwise)),
+    }
+
+
 def run_binary_config(dataset: str, strategy_name: str, seed: int,
                       pop_size=DEFAULT_POP_SIZE, n_iter=DEFAULT_N_ITER,
+                      calibration: str = "none",
                       **slim_kwargs) -> dict:
     """Train and score one binary configuration on one seed."""
     from slim_gsgp.main_slim import slim
 
-    X, y = load_dataset(dataset)
-    X_train, y_train, X_val, y_val, X_test, y_test = _three_way_split(X, y, seed)
+    X_train, y_train, X_val, y_val, X_test, y_test = load_dataset_split(dataset, seed)
     strategy = get_strategy(strategy_name)
 
     started = time.time()
@@ -192,7 +190,7 @@ def run_binary_config(dataset: str, strategy_name: str, seed: int,
         X_test=X_val, y_test=strategy.encode(y_val),
         dataset_name=dataset, fitness_function=strategy.fit_string,
         pop_size=pop_size, n_iter=n_iter, seed=seed,
-        log_level=0, verbose=0, **slim_kwargs,
+        log_level=0, verbose=0, test_elite=False, **slim_kwargs,
     )
     train_time = time.time() - started
 
@@ -205,6 +203,8 @@ def run_binary_config(dataset: str, strategy_name: str, seed: int,
         "train_time_s": train_time, "inference_time_s": inference_time,
         "nodes_count": model.nodes_count, "n_blocks": model.size,
     }
+    if slim_kwargs.get("use_adaptive_inflate"):
+        row["candidate_batch"] = int(slim_kwargs.get("adaptive_candidate_batch", 1))
     row.update(evaluate_predictions(
         strategy.encode(y_test).numpy(), strategy.decode(raw).numpy(),
         scores=raw.numpy(), n_classes=2,
@@ -213,11 +213,20 @@ def run_binary_config(dataset: str, strategy_name: str, seed: int,
         codes = simplex_codes(2)
         y_rows = (strategy.encode(y_test) > 0).long()
         row.update(_margin_diagnostics(raw.unsqueeze(1), y_rows, codes))
+    if calibration != "none":
+        if calibration not in ("platt", "isotonic"):
+            raise ValueError("binary calibration must be 'none', 'platt', or 'isotonic'")
+        calibrated = binary_probabilities(
+            model.predict(X_val).numpy(), y_val.numpy(), raw.numpy(), calibration,
+        )
+        row["calibration_method"] = calibrated.method
+        row.update(_calibration_metrics(y_test.numpy(), calibrated.probabilities, 2))
     return row
 
 
 def run_multiclass_config(dataset: str, architecture: str, seed: int,
                           pop_size=DEFAULT_POP_SIZE, n_iter=DEFAULT_N_ITER,
+                          objective: str = "margin", calibration: str = "none",
                           **kwargs) -> dict:
     """
     Train and score one multiclass configuration on one seed.
@@ -232,12 +241,13 @@ def run_multiclass_config(dataset: str, architecture: str, seed: int,
     from slim_gsgp.classification.multiclass import fit_multiclass
     from slim_gsgp.classification.shared_blocks import fit_shared_blocks
 
-    X, y = load_dataset(dataset)
-    X_train, y_train, X_val, y_val, X_test, y_test = _three_way_split(X, y, seed)
-    n_classes = len(torch.unique(y))
+    X_train, y_train, X_val, y_val, X_test, y_test = load_dataset_split(dataset, seed)
+    n_classes = len(torch.unique(y_train))
 
     started = time.time()
     if architecture == "independent":
+        if objective != "code_regression":
+            raise ValueError("independent multiclass uses code_regression only")
         per_program_iter = max(1, round(n_iter / (n_classes - 1)))
         model = fit_multiclass(X_train, y_train, X_val, y_val,
                                pop_size=pop_size, n_iter=per_program_iter,
@@ -246,7 +256,7 @@ def run_multiclass_config(dataset: str, architecture: str, seed: int,
         nodes = sum(m.nodes_count for m in model.models)
     elif architecture == "shared_blocks":
         model = fit_shared_blocks(X_train, y_train, pop_size=pop_size,
-                                  n_iter=n_iter, seed=seed, **kwargs)
+                                  n_iter=n_iter, seed=seed, objective=objective, **kwargs)
         n_blocks = model.individual.size
         nodes = model.individual.nodes_count
     else:
@@ -269,6 +279,22 @@ def run_multiclass_config(dataset: str, architecture: str, seed: int,
         class_to_row = {float(c): i for i, c in enumerate(model.classes)}
         y_rows = torch.tensor([class_to_row[float(c)] for c in y_test])
         row.update(_margin_diagnostics(model.semantics(X_test), y_rows, codes))
+    if calibration != "none":
+        if calibration != "temperature":
+            raise ValueError("multiclass calibration must be 'none' or 'temperature'")
+        if architecture == "independent":
+            validation_semantics = torch.stack([m.predict(X_val) for m in model.models], dim=1)
+            test_semantics = torch.stack([m.predict(X_test) for m in model.models], dim=1)
+            validation_scores = validation_semantics @ model.codes.T
+            test_scores = test_semantics @ model.codes.T
+        else:
+            validation_scores = model.semantics(X_val) @ model.codes.T
+            test_scores = model.semantics(X_test) @ model.codes.T
+        calibrated = multiclass_temperature_probabilities(
+            validation_scores.numpy(), y_val.numpy(), test_scores.numpy(),
+        )
+        row["calibration_method"] = calibrated.method
+        row.update(_calibration_metrics(y_test.numpy(), calibrated.probabilities, n_classes))
     return row
 
 
@@ -280,9 +306,20 @@ def _multiclass_names():
     return [spec.name for spec in MULTICLASS_DATASETS]
 
 
+def _config_hash(question, *, datasets, seeds, pop_size, n_iter, slim_version, risk, calibration):
+    """Stable identifier used to prevent accidental resume across incompatible jobs."""
+    payload = {
+        "question": question, "datasets": datasets, "seeds": list(seeds),
+        "pop_size": pop_size, "n_iter": n_iter, "slim_version": slim_version,
+        "risk": risk, "calibration": calibration,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def run_question(question: str, datasets=None, seeds=DEFAULT_SEEDS,
                  pop_size=DEFAULT_POP_SIZE, n_iter=DEFAULT_N_ITER,
-                 progress=True, slim_version=None) -> pd.DataFrame:
+                 progress=True, slim_version=None, risk: str = "balanced",
+                 calibration: str = "none", on_result=None, skip_keys=frozenset()) -> pd.DataFrame:
     """
     Run one experimental question over its datasets and seeds.
 
@@ -301,17 +338,31 @@ def run_question(question: str, datasets=None, seeds=DEFAULT_SEEDS,
     """
     seed_range = range(seeds) if isinstance(seeds, int) else list(seeds)
     rows = []
-    common = {} if slim_version is None else {"slim_version": slim_version}
+    if risk not in ("balanced", "empirical"):
+        raise ValueError("risk must be 'balanced' or 'empirical'")
+    common = {"balanced": risk == "balanced"}
+    if slim_version is not None:
+        common["slim_version"] = slim_version
+    run_hash = _config_hash(question, datasets=datasets, seeds=seed_range,
+                            pop_size=pop_size, n_iter=n_iter, slim_version=slim_version,
+                            risk=risk, calibration=calibration)
 
     def _record(fn, label, **kwargs):
+        key = (question, kwargs.get("dataset"), label, kwargs.get("seed"))
+        if key in skip_keys:
+            return
         try:
-            row = fn(**kwargs)
+            row = fn(**kwargs, calibration=calibration)
         except Exception as error:                  # keep a long campaign alive
             row = {"dataset": kwargs.get("dataset"), "seed": kwargs.get("seed"),
                    "method": label, "error": f"{type(error).__name__}: {error}"}
         row["method"] = label
         row["question"] = question
+        row["risk"] = risk
+        row["config_hash"] = run_hash
         rows.append(row)
+        if on_result is not None:
+            on_result(row)
         if progress:
             status = "ERROR" if "error" in row else f"{row.get('accuracy', float('nan')):.4f}"
             print(f"  {question} {str(row['dataset']):>14} {label:>18} "
@@ -342,11 +393,16 @@ def run_question(question: str, datasets=None, seeds=DEFAULT_SEEDS,
 
     elif question == "q4":
         names = datasets or _multiclass_names()
-        for dataset, architecture, seed in itertools.product(
-                names, ("independent", "shared_blocks"), seed_range):
-            _record(run_multiclass_config, architecture, dataset=dataset,
-                    architecture=architecture, seed=seed, pop_size=pop_size,
-                    n_iter=n_iter, **common)
+        arms = (
+            ("independent_code", "independent", "code_regression"),
+            ("shared_code", "shared_blocks", "code_regression"),
+            ("shared_margin", "shared_blocks", "margin"),
+        )
+        for dataset, arm, seed in itertools.product(names, arms, seed_range):
+            label, architecture, objective = arm
+            _record(run_multiclass_config, label, dataset=dataset,
+                    architecture=architecture, objective=objective, seed=seed,
+                    pop_size=pop_size, n_iter=n_iter, **common)
 
     elif question == "q5":
         names = datasets or _binary_names()
@@ -354,16 +410,52 @@ def run_question(question: str, datasets=None, seeds=DEFAULT_SEEDS,
             _record(run_binary_config, f"random_ms{step:g}", dataset=dataset,
                     strategy_name="margin", seed=seed, pop_size=pop_size,
                     n_iter=n_iter, ms_lower=step, ms_upper=step, **common)
-            _record(run_binary_config, f"adaptive_ms{step:g}", dataset=dataset,
+        for dataset, seed in itertools.product(names, seed_range):
+            _record(run_binary_config, "adaptive", dataset=dataset,
                     strategy_name="margin", seed=seed, pop_size=pop_size,
-                    n_iter=n_iter, ms_lower=step, ms_upper=step,
-                    use_adaptive_inflate=True, **common)
+                    n_iter=n_iter, use_adaptive_inflate=True, **common)
         for row in rows:
             operator, _, step = row["method"].partition("_ms")
-            row["operator"], row["ms"] = operator, float(step)
+            row["operator"] = operator
+            row["ms"] = float(step) if step else np.nan
+
+    elif question == "q1m":
+        names = datasets or _multiclass_names()
+        for dataset, objective, seed in itertools.product(names, ("margin", "cross_entropy"), seed_range):
+            _record(run_multiclass_config, f"shared_{objective}", dataset=dataset,
+                    architecture="shared_blocks", objective=objective, seed=seed,
+                    pop_size=pop_size, n_iter=n_iter, **common)
+
+    elif question == "q6":
+        names = datasets or _binary_names()
+        for dataset, candidate_batch, seed in itertools.product(names, (1, 4, 16), seed_range):
+            _record(run_binary_config, f"adaptive_candidates{candidate_batch}", dataset=dataset,
+                    strategy_name="margin", seed=seed, pop_size=pop_size, n_iter=n_iter,
+                    use_adaptive_inflate=True, adaptive_candidate_batch=candidate_batch,
+                    **common)
+        for row in rows:
+            row["candidate_batch"] = int(row["method"].removeprefix("adaptive_candidates"))
+
+    elif question == "q7":
+        names = datasets or _binary_names()
+        for dataset, tolerance, seed in itertools.product(names, (0.0, 0.01), seed_range):
+            _record(run_binary_config, f"parsimony_{tolerance:g}", dataset=dataset,
+                    strategy_name="margin", seed=seed, pop_size=pop_size, n_iter=n_iter,
+                    parsimony_tolerance=tolerance, **common)
+        for row in rows:
+            row["parsimony_tolerance"] = float(row["method"].removeprefix("parsimony_"))
+
+    elif question == "q8":
+        names = datasets or _multiclass_names()
+        for dataset, geometry, seed in itertools.product(names, ("simplex", "prior_weighted"), seed_range):
+            _record(run_multiclass_config, f"shared_margin_{geometry}", dataset=dataset,
+                    architecture="shared_blocks", objective="margin", geometry=geometry,
+                    seed=seed, pop_size=pop_size, n_iter=n_iter, **common)
+        for row in rows:
+            row["geometry"] = row["method"].removeprefix("shared_margin_")
 
     else:
-        raise ValueError(f"unknown question {question!r}; expected q1..q5")
+        raise ValueError(f"unknown question {question!r}; expected q1, q1m, q2..q8")
 
     return pd.DataFrame(rows)
 
@@ -462,8 +554,12 @@ def analyse(results: pd.DataFrame, question: str) -> pd.DataFrame:
         "q1": ("balanced_accuracy", "sigmoid_rmse"),
         "q2": ("balanced_accuracy", "code_regression"),
         "q3": ("balanced_accuracy", "margin_lam0"),
-        "q4": ("macro_f1", "independent"),
+        "q1m": ("macro_f1", "shared_cross_entropy"),
+        "q4": ("macro_f1", "shared_code"),
         "q5": ("balanced_accuracy", None),
+        "q6": ("balanced_accuracy", "adaptive_candidates1"),
+        "q7": ("balanced_accuracy", "parsimony_0"),
+        "q8": ("macro_f1", "shared_margin_simplex"),
     }
     metric, reference = plans[question]
     if question == "q5":
@@ -481,7 +577,7 @@ def main(argv=None):
         prog="python -m slim_gsgp.classification.campaign",
         description="Run the MS-SLIM experimental campaign.")
     parser.add_argument("--question", default="all",
-                        choices=["all", "q1", "q2", "q3", "q4", "q5"],
+                        choices=["all", "q1", "q1m", "q2", "q3", "q4", "q5", "q6", "q7", "q8"],
                         help="Experimental question to run (default: all).")
     parser.add_argument("--datasets", nargs="*", default=None,
                         help="Dataset names; defaults to the question's full set.")
@@ -497,19 +593,47 @@ def main(argv=None):
     parser.add_argument("--out", type=Path, default=Path("results"),
                         help="Directory for the result CSVs (default: results/).")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-run progress.")
+    parser.add_argument("--risk", choices=["balanced", "empirical"], default="balanced")
+    parser.add_argument("--calibration", default="none",
+                        choices=["none", "platt", "isotonic", "temperature"])
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip successful rows already checkpointed in the output CSV.")
     args = parser.parse_args(argv)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    questions = ["q1", "q2", "q3", "q4", "q5"] if args.question == "all" else [args.question]
+    questions = ["q1", "q1m", "q2", "q3", "q4", "q5"] if args.question == "all" else [args.question]
 
     for question in questions:
         print(f"== {question} ==", flush=True)
         started = time.time()
+        raw_path = args.out / f"{question}.csv"
+        existing = pd.read_csv(raw_path) if args.resume and raw_path.exists() else pd.DataFrame()
+        skip_keys = set()
+        if not existing.empty:
+            expected_hash = _config_hash(
+                question, datasets=args.datasets, seeds=range(args.seeds),
+                pop_size=args.pop_size, n_iter=args.n_iter, slim_version=args.slim_version,
+                risk=args.risk, calibration=args.calibration,
+            )
+            same_config = existing.get("config_hash", pd.Series("", index=existing.index)) == expected_hash
+            good = existing[same_config & existing.get("error", pd.Series(index=existing.index, dtype=object)).isna()]
+            skip_keys = set(zip(good["question"], good["dataset"], good["method"], good["seed"]))
+
+        completed = []
+
+        def checkpoint(row):
+            completed.append(row)
+            checkpoint_path = raw_path.with_suffix(".checkpoint.csv")
+            pd.concat([existing, pd.DataFrame(completed)], ignore_index=True).to_csv(checkpoint_path, index=False)
+            checkpoint_path.replace(raw_path)
+
         results = run_question(question, datasets=args.datasets, seeds=args.seeds,
                                pop_size=args.pop_size, n_iter=args.n_iter,
-                               progress=not args.quiet, slim_version=args.slim_version)
-        raw_path = args.out / f"{question}.csv"
-        results.to_csv(raw_path, index=False)
+                               progress=not args.quiet, slim_version=args.slim_version,
+                               risk=args.risk, calibration=args.calibration,
+                               on_result=checkpoint, skip_keys=skip_keys)
+        if not existing.empty:
+            results = pd.concat([existing, results], ignore_index=True)
 
         try:
             summary = analyse(results, question)
