@@ -25,7 +25,6 @@ logging the results for further analysis.
 """
 import uuid
 import os
-import warnings
 from pathlib import Path
 
 import torch
@@ -62,7 +61,7 @@ def _choice_error(prefix, options):
 
 
 def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = None, y_test: torch.Tensor = None,
-         dataset_name: str = None,
+         dataset_name: str = "dataset_1",
          slim_version: str = "SLIM+SIG2",
          pop_size: int = slim_gsgp_parameters["pop_size"],
          n_iter: int = slim_gsgp_solve_parameters["n_iter"],
@@ -214,11 +213,9 @@ def slim(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
         raise TypeError("Both ms_lower and ms_upper must be either int or float")
 
     if test_elite and (X_test is None or y_test is None):
-        warnings.warn("If test_elite is True, a test dataset must be provided. test_elite has been set to False")
-        test_elite = False
+        raise ValueError("test_elite=True requires both X_test and y_test")
 
     if dataset_name is None:
-        warnings.warn("No dataset name set. Using default value of dataset_1.")
         dataset_name = "dataset_1"
 
     # If so, create the ms callable

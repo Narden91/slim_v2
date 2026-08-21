@@ -53,7 +53,7 @@ settings_dict = {"p_test": 0.2}
 gp_solve_parameters = {
     "log": 1,
     "verbose": 1,
-    "test_elite": True,
+    "test_elite": False,
     "run_info": None,
     "ffunction": "rmse",
     "n_jobs": 1,

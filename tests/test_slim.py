@@ -62,6 +62,11 @@ def test_slim_valid_inputs():
     result = slim(X_train, y_train, n_iter=3)
     assert result is not None  # Check if function returns valid output
 
+
+def test_slim_test_elite_requires_test_data():
+    with pytest.raises(ValueError, match="test_elite=True requires both X_test and y_test"):
+        slim(valid_X_train, valid_y_train, test_elite=True)
+
 def test_slim_invalid_X_train():
     y_train = torch.tensor([1, 0])
     with pytest.raises(TypeError, match="X_train must be a torch.Tensor"):

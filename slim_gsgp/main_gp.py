@@ -25,7 +25,6 @@ logging the results for further analysis.
 """
 import uuid
 import os
-import warnings
 from slim_gsgp.algorithms.GP.gp import GP
 from slim_gsgp.algorithms.GP.operators.mutators import mutate_tree_subtree
 from slim_gsgp.algorithms.GP.representations.tree_utils import tree_depth
@@ -36,7 +35,7 @@ from slim_gsgp.utils.utils import (get_terminals, validate_inputs, get_best_max,
 
 
 def gp(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = None, y_test: torch.Tensor = None,
-       dataset_name: str = None,
+       dataset_name: str = "dataset_1",
        pop_size: int = gp_parameters["pop_size"],
        n_iter: int = gp_solve_parameters["n_iter"],
        p_xo: float = gp_parameters['p_xo'],
@@ -140,8 +139,7 @@ def gp(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = None
     assert 0 <= p_xo <= 1, "p_xo must be a number between 0 and 1"
 
     if test_elite and (X_test is None or y_test is None):
-        warnings.warn("If test_elite is True, a test dataset must be provided. test_elite has been set to False")
-        test_elite = False
+        raise ValueError("test_elite=True requires both X_test and y_test")
 
     if not isinstance(max_depth, int) and max_depth is not None:
         raise TypeError("max_depth value must be a int or None")
@@ -149,7 +147,6 @@ def gp(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = None
     assert max_depth is None or init_depth <= max_depth, f"max_depth must be at least {init_depth}"
 
     if dataset_name is None:
-        warnings.warn("No dataset name set. Using default value of dataset_1.")
         dataset_name = "dataset_1"
 
 

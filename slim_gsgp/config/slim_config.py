@@ -59,7 +59,7 @@ slim_gsgp_solve_parameters = {
     "n_elites": 1,
     "log": 1,
     "verbose": 1,
-    "test_elite": True
+    "test_elite": False
 }
 
 # SLIM GSGP parameters

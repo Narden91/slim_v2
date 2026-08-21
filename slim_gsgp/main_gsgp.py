@@ -26,7 +26,6 @@ logging the results for further analysis.
 
 import uuid
 import os
-import warnings
 
 from slim_gsgp.algorithms.GSGP.gsgp import GSGP
 from slim_gsgp.config.gsgp_config import *
@@ -35,7 +34,7 @@ from slim_gsgp.utils.utils import get_terminals, validate_inputs, generate_rando
 from typing import Callable
 
 def gsgp(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = None, y_test: torch.Tensor = None,
-         dataset_name: str = None,
+         dataset_name: str = "dataset_1",
          pop_size: int = gsgp_parameters["pop_size"],
          n_iter: int = gsgp_solve_parameters["n_iter"],
          p_xo: float = gsgp_parameters["p_xo"],
@@ -142,11 +141,9 @@ def gsgp(X_train: torch.Tensor, y_train: torch.Tensor, X_test: torch.Tensor = No
                     initializer=initializer, tournament_size=tournament_size)
 
     if test_elite and (X_test is None or y_test is None):
-        warnings.warn("If test_elite is True, a test dataset must be provided. test_elite has been set to False")
-        test_elite = False
+        raise ValueError("test_elite=True requires both X_test and y_test")
 
     if dataset_name is None:
-        warnings.warn("No dataset name set. Using default value of dataset_1.")
         dataset_name = "dataset_1"
 
     # Checking that both ms bounds are numerical

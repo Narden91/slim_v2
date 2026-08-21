@@ -61,7 +61,7 @@ gsgp_solve_parameters = {
     "log": 1,
     "verbose": 1,
     "ffunction": "rmse",
-    "test_elite": True
+    "test_elite": False
 }
 
 # GSGP parameters
